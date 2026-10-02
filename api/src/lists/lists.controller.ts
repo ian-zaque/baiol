@@ -53,6 +53,16 @@ export class ListsController {
     return this.lists.remove(id, user.id);
   }
 
+  @Get(':id/share')
+  shareLink(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.lists.getShareLink(id, user.id);
+  }
+
+  @Post(':id/share/rotate')
+  rotateShare(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.lists.rotateShareToken(id, user.id);
+  }
+
   @Get(':id/members')
   members(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.lists.assertMember(id, user.id).then(() => this.lists.getMembers(id));

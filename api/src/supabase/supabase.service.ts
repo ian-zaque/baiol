@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import WebSocket from 'ws';
 import { AuthUser } from '../common/auth-user';
 
 @Injectable()
@@ -15,6 +16,10 @@ export class SupabaseService {
         auth: {
           persistSession: false,
           autoRefreshToken: false,
+        },
+        realtime: {
+          // Node 20 has no global WebSocket; supabase realtime requires `ws`.
+          transport: WebSocket as never,
         },
       },
     );

@@ -23,13 +23,46 @@ create table if not exists public.lists (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   description text not null default '',
+  currency text not null default 'BRL',
   created_by_id uuid not null references public.profiles (id),
+  share_token text not null unique default encode(gen_random_bytes(16), 'hex'),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   deleted_at timestamptz
 );
 
 create index if not exists lists_created_by_id_idx on public.lists (created_by_id);
+create unique index if not exists lists_share_token_idx on public.lists (share_token);
+
+-- ---------------------------------------------------------------------------
+-- Grocery types (catalog). Users select one; they do not edit this table.
+-- ---------------------------------------------------------------------------
+create table if not exists public.grocery_types (
+  id uuid primary key default gen_random_uuid(),
+  code text not null unique,
+  name text not null,
+  sort_order integer not null
+);
+
+insert into public.grocery_types (code, name, sort_order)
+values
+  ('meat', 'Meat', 10),
+  ('protein', 'Protein', 20),
+  ('dairy', 'Dairy', 30),
+  ('bakery', 'Bakery', 40),
+  ('fruits', 'Fruits', 50),
+  ('vegetables', 'Vegetables', 60),
+  ('grains', 'Grains', 70),
+  ('canned_foods', 'Canned Foods', 80),
+  ('condiments', 'Condiments', 90),
+  ('snacks', 'Snacks', 100),
+  ('beverages', 'Beverages', 110),
+  ('household', 'Household', 120),
+  ('personal_care', 'Personal Care', 130),
+  ('other', 'Other', 140)
+on conflict (code) do update
+  set name = excluded.name,
+      sort_order = excluded.sort_order;
 
 -- ---------------------------------------------------------------------------
 -- Items
@@ -37,6 +70,7 @@ create index if not exists lists_created_by_id_idx on public.lists (created_by_i
 create table if not exists public.items (
   id uuid primary key default gen_random_uuid(),
   list_id uuid not null references public.lists (id) on delete cascade,
+  grocery_type_id uuid references public.grocery_types (id),
   name text not null,
   description text not null default '',
   amount text not null default '',
@@ -47,6 +81,25 @@ create table if not exists public.items (
 );
 
 create index if not exists items_list_id_idx on public.items (list_id);
+
+update public.items
+set grocery_type_id = null
+where grocery_type_id in (
+  select id
+  from public.grocery_types
+  where code not in (
+    'meat', 'protein', 'dairy', 'bakery', 'fruits', 'vegetables', 'grains',
+    'canned_foods', 'condiments', 'snacks', 'beverages', 'household',
+    'personal_care', 'other'
+  )
+);
+
+delete from public.grocery_types
+where code not in (
+  'meat', 'protein', 'dairy', 'bakery', 'fruits', 'vegetables', 'grains',
+  'canned_foods', 'condiments', 'snacks', 'beverages', 'household',
+  'personal_care', 'other'
+);
 
 -- ---------------------------------------------------------------------------
 -- Membership (access control)
@@ -136,6 +189,7 @@ for each row execute function public.handle_new_user();
 -- ---------------------------------------------------------------------------
 alter table public.profiles enable row level security;
 alter table public.lists enable row level security;
+alter table public.grocery_types enable row level security;
 alter table public.items enable row level security;
 alter table public.list_members enable row level security;
 alter table public.list_invites enable row level security;

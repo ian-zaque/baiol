@@ -14,12 +14,17 @@ import { extractBearerToken } from '../common/extract-bearer';
 import { displayNameOf } from '../common/types';
 import { ListsService } from '../lists/lists.service';
 import { SupabaseService } from '../supabase/supabase.service';
+import { dinosaurNickname } from './dinosaur-names';
 import { type ListRealtimeEvent, REALTIME_EVENTS } from './realtime.events';
 
 type PresenceUser = {
   id: string;
   email: string;
   display_name: string;
+};
+
+type SocketIdentity = PresenceUser & {
+  shareListId?: string;
 };
 
 @WebSocketGateway({
@@ -46,21 +51,44 @@ export class RealtimeGateway
         typeof client.handshake.auth?.token === 'string'
           ? client.handshake.auth.token
           : undefined;
-      const token = extractBearerToken(
+      const shareToken =
+        typeof client.handshake.auth?.shareToken === 'string'
+          ? client.handshake.auth.shareToken
+          : undefined;
+      const guestId =
+        typeof client.handshake.auth?.guestId === 'string'
+          ? client.handshake.auth.guestId
+          : undefined;
+      const jwt = extractBearerToken(
         Array.isArray(header) ? header[0] : header,
         authToken,
       );
-      if (!token) {
-        client.disconnect();
+
+      if (jwt) {
+        const user = await this.supabase.getUserFromToken(jwt);
+        const profile = await this.lists.ensureProfile(user);
+        client.data.user = {
+          id: user.id,
+          email: user.email,
+          display_name: displayNameOf(profile),
+        } satisfies SocketIdentity;
+        client.emit('ready');
         return;
       }
-      const user = await this.supabase.getUserFromToken(token);
-      const profile = await this.lists.ensureProfile(user);
-      client.data.user = {
-        id: user.id,
-        email: user.email,
-        display_name: displayNameOf(profile),
-      } satisfies PresenceUser;
+
+      if (shareToken && guestId) {
+        const list = await this.lists.findByShareToken(shareToken);
+        client.data.user = {
+          id: guestId,
+          email: '',
+          display_name: dinosaurNickname(guestId),
+          shareListId: list.id,
+        } satisfies SocketIdentity;
+        client.emit('ready');
+        return;
+      }
+
+      client.disconnect();
     } catch (error) {
       this.logger.warn(`Socket rejected: ${(error as Error).message}`);
       client.disconnect();
@@ -83,9 +111,21 @@ export class RealtimeGateway
     if (!user || !listId) {
       return { ok: false };
     }
-    await this.lists.assertMember(listId, user.id);
+
+    if (user.shareListId) {
+      if (user.shareListId !== listId) {
+        return { ok: false };
+      }
+    } else {
+      await this.lists.assertMember(listId, user.id);
+    }
+
+    const named = user.shareListId
+      ? { ...user, display_name: this.guestName(listId, user.id) }
+      : user;
+    client.data.user = named;
     await client.join(this.roomName(listId));
-    this.addPresence(listId, client.id, user);
+    this.addPresence(listId, client.id, named);
     this.emitPresence(listId);
     return { ok: true };
   }
@@ -132,8 +172,8 @@ export class RealtimeGateway
     this.server.to(this.roomName(event.listId)).emit(event.type, event);
   }
 
-  private socketUser(client: Socket): PresenceUser | undefined {
-    return client.data.user as PresenceUser | undefined;
+  private socketUser(client: Socket): SocketIdentity | undefined {
+    return client.data.user as SocketIdentity | undefined;
   }
 
   private roomName(listId: string) {
@@ -167,6 +207,17 @@ export class RealtimeGateway
       this.presence.delete(listId);
     }
     this.emitPresence(listId);
+  }
+
+  private guestName(listId: string, guestId: string): string {
+    const room = this.presence.get(listId);
+    const taken: string[] = [];
+    for (const user of room?.values() ?? []) {
+      if (user.id !== guestId) {
+        taken.push(user.display_name);
+      }
+    }
+    return dinosaurNickname(guestId, taken);
   }
 
   private emitPresence(listId: string) {

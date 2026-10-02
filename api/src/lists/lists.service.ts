@@ -1,9 +1,12 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { randomBytes } from 'crypto';
 import { AuthUser } from '../common/auth-user';
 import {
   ItemRow,
@@ -13,10 +16,12 @@ import {
   ProfileRow,
   PublicMember,
   displayNameOf,
+  ITEM_SELECT,
   toPublicItem,
   toPublicList,
 } from '../common/types';
 import { REALTIME_EVENTS } from '../realtime/realtime.events';
+import { resolveCurrency } from './currencies';
 import { SupabaseService } from '../supabase/supabase.service';
 import {
   CreateItemDto,
@@ -30,6 +35,7 @@ export class ListsService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly events: EventEmitter2,
+    private readonly config: ConfigService,
   ) {}
 
   async listForUser(userId: string) {
@@ -48,7 +54,10 @@ export class ListsService {
     }
 
     const roleByList = new Map(
-      (memberships ?? []).map((row) => [row.list_id as string, row.role as MemberRole]),
+      (memberships ?? []).map((row) => [
+        row.list_id as string,
+        row.role as MemberRole,
+      ]),
     );
 
     const { data: lists, error } = await this.supabase.client
@@ -90,14 +99,12 @@ export class ListsService {
 
   async getForUser(listId: string, userId: string) {
     await this.assertMember(listId, userId);
-    const list = await this.getActiveList(listId);
-    const items = await this.getActiveItems(listId);
-    const members = await this.getMembers(listId);
-    return {
-      ...toPublicList(list, items),
-      members,
-      role: members.find((member) => member.user_id === userId)?.role ?? 'editor',
-    };
+    return this.getListPayload(listId, userId);
+  }
+
+  async getByShareToken(token: string) {
+    const list = await this.findByShareToken(token);
+    return this.getListPayload(list.id);
   }
 
   async create(user: AuthUser, dto: CreateListDto) {
@@ -108,7 +115,9 @@ export class ListsService {
       .insert({
         name: dto.name.trim(),
         description: dto.description?.trim() ?? '',
+        currency: resolveCurrency(dto.currency),
         created_by_id: user.id,
+        share_token: this.newShareToken(),
       })
       .select('*')
       .single();
@@ -138,31 +147,12 @@ export class ListsService {
 
   async update(listId: string, userId: string, dto: UpdateListDto) {
     await this.assertMember(listId, userId);
+    return this.patchList(listId, dto);
+  }
 
-    const patch: Record<string, string> = {};
-    if (dto.name !== undefined) patch.name = dto.name.trim();
-    if (dto.description !== undefined) patch.description = dto.description.trim();
-
-    const { data: list, error } = await this.supabase.client
-      .from('lists')
-      .update(patch)
-      .eq('id', listId)
-      .is('deleted_at', null)
-      .select('*')
-      .single();
-
-    if (error || !list) {
-      throw new NotFoundException('List not found');
-    }
-
-    const items = await this.getActiveItems(listId);
-    const publicList = toPublicList(list as ListRow, items);
-    this.events.emit(REALTIME_EVENTS.listUpdated, {
-      type: REALTIME_EVENTS.listUpdated,
-      listId,
-      list: publicList,
-    });
-    return publicList;
+  async updateByShareToken(token: string, dto: UpdateListDto) {
+    const list = await this.findByShareToken(token);
+    return this.patchList(list.id, dto);
   }
 
   async remove(listId: string, userId: string) {
@@ -188,31 +178,12 @@ export class ListsService {
 
   async createItem(listId: string, userId: string, dto: CreateItemDto) {
     await this.assertMember(listId, userId);
+    return this.insertItem(listId, dto);
+  }
 
-    const { data: item, error } = await this.supabase.client
-      .from('items')
-      .insert({
-        list_id: listId,
-        name: dto.name.trim(),
-        description: dto.description?.trim() ?? '',
-        amount: dto.amount?.trim() ?? '',
-        price: dto.price ?? 0,
-      })
-      .select('*')
-      .single();
-
-    if (error || !item) {
-      throw new Error(error?.message ?? 'Could not create item');
-    }
-
-    const publicItem = toPublicItem(item as ItemRow);
-    this.events.emit(REALTIME_EVENTS.itemCreated, {
-      type: REALTIME_EVENTS.itemCreated,
-      listId,
-      item: publicItem,
-    });
-    await this.touchList(listId);
-    return publicItem;
+  async createItemByShareToken(token: string, dto: CreateItemDto) {
+    const list = await this.findByShareToken(token);
+    return this.insertItem(list.id, dto);
   }
 
   async updateItem(
@@ -222,56 +193,47 @@ export class ListsService {
     dto: UpdateItemDto,
   ) {
     await this.assertMember(listId, userId);
+    return this.patchItem(listId, itemId, dto);
+  }
 
-    const patch: Record<string, string | number> = {};
-    if (dto.name !== undefined) patch.name = dto.name.trim();
-    if (dto.description !== undefined) patch.description = dto.description.trim();
-    if (dto.amount !== undefined) patch.amount = dto.amount.trim();
-    if (dto.price !== undefined) patch.price = dto.price;
-
-    const { data: item, error } = await this.supabase.client
-      .from('items')
-      .update(patch)
-      .eq('id', itemId)
-      .eq('list_id', listId)
-      .is('deleted_at', null)
-      .select('*')
-      .single();
-
-    if (error || !item) {
-      throw new NotFoundException('Item not found');
-    }
-
-    const publicItem = toPublicItem(item as ItemRow);
-    this.events.emit(REALTIME_EVENTS.itemUpdated, {
-      type: REALTIME_EVENTS.itemUpdated,
-      listId,
-      item: publicItem,
-    });
-    await this.touchList(listId);
-    return publicItem;
+  async updateItemByShareToken(
+    token: string,
+    itemId: string,
+    dto: UpdateItemDto,
+  ) {
+    const list = await this.findByShareToken(token);
+    return this.patchItem(list.id, itemId, dto);
   }
 
   async removeItem(listId: string, itemId: string, userId: string) {
     await this.assertMember(listId, userId);
+    return this.softDeleteItem(listId, itemId);
+  }
+
+  async removeItemByShareToken(token: string, itemId: string) {
+    const list = await this.findByShareToken(token);
+    return this.softDeleteItem(list.id, itemId);
+  }
+
+  async getShareLink(listId: string, userId: string) {
+    await this.assertMember(listId, userId);
+    const list = await this.getActiveList(listId);
+    return this.sharePayload(list.share_token);
+  }
+
+  async rotateShareToken(listId: string, userId: string) {
+    await this.assertOwner(listId, userId);
+    const token = this.newShareToken();
     const { error } = await this.supabase.client
-      .from('items')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', itemId)
-      .eq('list_id', listId)
+      .from('lists')
+      .update({ share_token: token })
+      .eq('id', listId)
       .is('deleted_at', null);
 
     if (error) {
-      throw new NotFoundException('Item not found');
+      throw new Error(error.message);
     }
-
-    this.events.emit(REALTIME_EVENTS.itemDeleted, {
-      type: REALTIME_EVENTS.itemDeleted,
-      listId,
-      itemId,
-    });
-    await this.touchList(listId);
-    return { ok: true };
+    return this.sharePayload(token);
   }
 
   async getMembers(listId: string): Promise<PublicMember[]> {
@@ -299,7 +261,10 @@ export class ListsService {
     }
 
     const profileById = new Map(
-      (profiles ?? []).map((profile) => [profile.id as string, profile as ProfileRow]),
+      (profiles ?? []).map((profile) => [
+        profile.id as string,
+        profile as ProfileRow,
+      ]),
     );
 
     return (members ?? []).map((row) => {
@@ -312,16 +277,6 @@ export class ListsService {
         role: member.role,
       };
     });
-  }
-
-  async emitMembersChanged(listId: string) {
-    const members = await this.getMembers(listId);
-    this.events.emit(REALTIME_EVENTS.membersChanged, {
-      type: REALTIME_EVENTS.membersChanged,
-      listId,
-      members,
-    });
-    return members;
   }
 
   async assertMember(listId: string, userId: string): Promise<MemberRow> {
@@ -348,6 +303,23 @@ export class ListsService {
       throw new ForbiddenException('Only the list owner can do this');
     }
     return member;
+  }
+
+  async findByShareToken(token: string): Promise<ListRow> {
+    const { data, error } = await this.supabase.client
+      .from('lists')
+      .select('*')
+      .eq('share_token', token)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(error.message);
+    }
+    if (!data) {
+      throw new NotFoundException('List not found');
+    }
+    return data as ListRow;
   }
 
   async ensureProfile(user: AuthUser): Promise<ProfileRow> {
@@ -389,6 +361,190 @@ export class ListsService {
     return data as ProfileRow;
   }
 
+  private async getListPayload(listId: string, userId?: string) {
+    const list = await this.getActiveList(listId);
+    const items = await this.getActiveItems(listId);
+    const members = await this.getMembers(listId);
+    return {
+      ...toPublicList(list, items),
+      members,
+      role: userId
+        ? (members.find((member) => member.user_id === userId)?.role ?? 'editor')
+        : ('editor' as const),
+    };
+  }
+
+  private async patchList(listId: string, dto: UpdateListDto) {
+    const patch: Record<string, string> = {};
+    if (dto.name !== undefined) patch.name = dto.name.trim();
+    if (dto.description !== undefined) patch.description = dto.description.trim();
+    if (dto.currency !== undefined) patch.currency = resolveCurrency(dto.currency);
+
+    const { data: list, error } = await this.supabase.client
+      .from('lists')
+      .update(patch)
+      .eq('id', listId)
+      .is('deleted_at', null)
+      .select('*')
+      .single();
+
+    if (error || !list) {
+      throw new NotFoundException('List not found');
+    }
+
+    const items = await this.getActiveItems(listId);
+    const publicList = toPublicList(list as ListRow, items);
+    this.events.emit(REALTIME_EVENTS.listUpdated, {
+      type: REALTIME_EVENTS.listUpdated,
+      listId,
+      list: publicList,
+    });
+    return publicList;
+  }
+
+  private async insertItem(listId: string, dto: CreateItemDto) {
+    if (dto.grocery_type_id) {
+      await this.assertGroceryType(dto.grocery_type_id);
+    }
+    const payload: Record<string, string | number | null> = {
+      list_id: listId,
+      name: dto.name.trim(),
+      description: dto.description?.trim() ?? '',
+      amount: dto.amount?.trim() ?? '',
+      price: dto.price ?? 0,
+    };
+    if (dto.grocery_type_id) {
+      payload.grocery_type_id = dto.grocery_type_id;
+    }
+
+    const { data: item, error } = await this.supabase.client
+      .from('items')
+      .insert(payload)
+      .select(ITEM_SELECT)
+      .single();
+
+    if (error || !item) {
+      if (error && this.missingGrocerySchema(error.message) && !dto.grocery_type_id) {
+        const fallback = await this.supabase.client
+          .from('items')
+          .insert(payload)
+          .select('*')
+          .single();
+        if (fallback.error || !fallback.data) {
+          throw new Error(fallback.error?.message ?? 'Could not create item');
+        }
+        const publicItem = toPublicItem(fallback.data as ItemRow);
+        this.events.emit(REALTIME_EVENTS.itemCreated, {
+          type: REALTIME_EVENTS.itemCreated,
+          listId,
+          item: publicItem,
+        });
+        await this.touchList(listId);
+        return publicItem;
+      }
+      throw new Error(error?.message ?? 'Could not create item');
+    }
+
+    const publicItem = toPublicItem(item as ItemRow);
+    this.events.emit(REALTIME_EVENTS.itemCreated, {
+      type: REALTIME_EVENTS.itemCreated,
+      listId,
+      item: publicItem,
+    });
+    await this.touchList(listId);
+    return publicItem;
+  }
+
+  private async patchItem(listId: string, itemId: string, dto: UpdateItemDto) {
+    const patch: Record<string, string | number | null> = {};
+    if (dto.name !== undefined) patch.name = dto.name.trim();
+    if (dto.description !== undefined) patch.description = dto.description.trim();
+    if (dto.amount !== undefined) patch.amount = dto.amount.trim();
+    if (dto.price !== undefined) patch.price = dto.price;
+    if (dto.grocery_type_id !== undefined) {
+      if (dto.grocery_type_id) {
+        await this.assertGroceryType(dto.grocery_type_id);
+      }
+      patch.grocery_type_id = dto.grocery_type_id;
+    }
+
+    let { data: item, error } = await this.supabase.client
+      .from('items')
+      .update(patch)
+      .eq('id', itemId)
+      .eq('list_id', listId)
+      .is('deleted_at', null)
+      .select(ITEM_SELECT)
+      .single();
+
+    if (error && this.missingGrocerySchema(error.message)) {
+      const fallbackPatch = { ...patch };
+      if (fallbackPatch.grocery_type_id == null) {
+        delete fallbackPatch.grocery_type_id;
+      }
+      const fallback = await this.supabase.client
+        .from('items')
+        .update(fallbackPatch)
+        .eq('id', itemId)
+        .eq('list_id', listId)
+        .is('deleted_at', null)
+        .select('*')
+        .single();
+      item = fallback.data;
+      error = fallback.error;
+    }
+
+    if (error || !item) {
+      throw new NotFoundException('Item not found');
+    }
+
+    const publicItem = toPublicItem(item as ItemRow);
+    this.events.emit(REALTIME_EVENTS.itemUpdated, {
+      type: REALTIME_EVENTS.itemUpdated,
+      listId,
+      item: publicItem,
+    });
+    await this.touchList(listId);
+    return publicItem;
+  }
+
+  private async softDeleteItem(listId: string, itemId: string) {
+    const { error } = await this.supabase.client
+      .from('items')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', itemId)
+      .eq('list_id', listId)
+      .is('deleted_at', null);
+
+    if (error) {
+      throw new NotFoundException('Item not found');
+    }
+
+    this.events.emit(REALTIME_EVENTS.itemDeleted, {
+      type: REALTIME_EVENTS.itemDeleted,
+      listId,
+      itemId,
+    });
+    await this.touchList(listId);
+    return { ok: true };
+  }
+
+  private sharePayload(token: string) {
+    const scheme = this.config.get<string>('APP_SCHEME') ?? 'baiol';
+    const webAppUrl = (
+      this.config.get<string>('WEB_APP_URL') ?? 'http://localhost:8081'
+    ).replace(/\/$/, '');
+    return {
+      token,
+      app_link: `${scheme}://join/${token}`,
+      web_link: `${webAppUrl}/join/${token}`,
+    };
+  }
+
+  private newShareToken() {
+    return randomBytes(16).toString('hex');
+  }
+
   private async getActiveList(listId: string): Promise<ListRow> {
     const { data, error } = await this.supabase.client
       .from('lists')
@@ -407,17 +563,63 @@ export class ListsService {
   }
 
   private async getActiveItems(listId: string): Promise<ItemRow[]> {
-    const { data, error } = await this.supabase.client
+    const embedded = await this.supabase.client
+      .from('items')
+      .select(ITEM_SELECT)
+      .eq('list_id', listId)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: true });
+
+    if (!embedded.error) {
+      return (embedded.data ?? []) as ItemRow[];
+    }
+    if (!this.missingGrocerySchema(embedded.error.message)) {
+      throw new Error(embedded.error.message);
+    }
+
+    const plain = await this.supabase.client
       .from('items')
       .select('*')
       .eq('list_id', listId)
       .is('deleted_at', null)
       .order('created_at', { ascending: true });
 
+    if (plain.error) {
+      throw new Error(plain.error.message);
+    }
+    return (plain.data ?? []) as ItemRow[];
+  }
+
+  async listGroceryTypes() {
+    const { data, error } = await this.supabase.client
+      .from('grocery_types')
+      .select('id, code, name, sort_order')
+      .order('sort_order', { ascending: true });
+
+    if (error) {
+      if (this.missingGrocerySchema(error.message)) return [];
+      throw new Error(error.message);
+    }
+    return data ?? [];
+  }
+
+  private missingGrocerySchema(message: string): boolean {
+    return message.includes('grocery_types') || message.includes('grocery_type_id');
+  }
+
+  private async assertGroceryType(id: string) {
+    const { data, error } = await this.supabase.client
+      .from('grocery_types')
+      .select('id')
+      .eq('id', id)
+      .maybeSingle();
+
     if (error) {
       throw new Error(error.message);
     }
-    return (data ?? []) as ItemRow[];
+    if (!data) {
+      throw new BadRequestException('Unknown grocery type');
+    }
   }
 
   private async touchList(listId: string) {

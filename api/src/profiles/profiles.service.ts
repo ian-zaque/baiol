@@ -1,7 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { AuthUser } from '../common/auth-user';
 import { ProfileRow, displayNameOf } from '../common/types';
-import { InvitesService } from '../invites/invites.service';
 import { ListsService } from '../lists/lists.service';
 import { SupabaseService } from '../supabase/supabase.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -11,15 +10,12 @@ export class ProfilesService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly lists: ListsService,
-    private readonly invites: InvitesService,
   ) {}
 
   async sync(user: AuthUser) {
     const profile = await this.lists.ensureProfile(user);
-    const accepted = await this.invites.acceptPendingForEmail(user);
     return {
       profile: this.toPublic(profile),
-      accepted_list_ids: accepted.accepted_list_ids,
     };
   }
 

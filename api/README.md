@@ -1,16 +1,16 @@
 # Baiol API
 
-NestJS API in front of Supabase. The mobile app talks only to this API for lists, items, invites, and live updates.
+NestJS API in front of Supabase. The mobile app talks to this API for lists, items, share links, and live updates.
 
 ## Setup
 
 1. Create a Supabase project.
 2. Run [`../supabase/schema.sql`](../supabase/schema.sql) in the SQL editor.
-3. In Authentication settings, enable email/password. For local testing you can disable **Confirm email**.
-4. Copy `.env.example` to `.env` and fill:
+3. If the project already ran an older schema, also run [`../supabase/share_token.sql`](../supabase/share_token.sql).
+4. In Authentication settings, enable email/password. For local testing you can disable **Confirm email**.
+5. Copy `.env.example` to `.env` and fill:
    - `SUPABASE_URL`
    - `SUPABASE_SERVICE_ROLE_KEY` (Project Settings → API)
-5. Optional: set `RESEND_API_KEY` for invite emails. Without it, invite links are printed in the API logs.
 
 ```bash
 npm install
@@ -21,19 +21,22 @@ Health check: `GET http://localhost:3000/health`
 
 ## Auth
 
-Send `Authorization: Bearer <supabase access token>` on REST and Socket.io (`auth.token`).
+Send `Authorization: Bearer <supabase access token>` on REST and Socket.io (`auth.token`) for owned lists.
+
+Share-link guests use `GET /shared/:token` (no JWT) and Socket.io `auth.shareToken` + `auth.guestId`.
 
 ## Main routes
 
-- `POST /me/sync` — upsert profile and auto-accept pending email invites
+- `POST /me/sync` — upsert profile
 - `GET|PATCH /me`
 - `GET|POST /lists`
 - `GET|PATCH|DELETE /lists/:id` (delete is owner-only, soft delete)
+- `GET /lists/:id/share` — copyable app + web links
+- `POST /lists/:id/share/rotate` — owner-only, invalidates the old link
 - `POST|PATCH|DELETE /lists/:id/items/:itemId`
 - `GET /lists/:id/members`
-- `GET|POST /lists/:id/invites`
-- `DELETE /lists/:id/invites/:inviteId`
-- `POST /invites/:token/accept`
-- `GET /invites/:token` — HTML fallback for email links
+- `GET /shared/:token` — public list JSON (HTML if the client asks for it)
+- `PATCH /shared/:token`
+- `POST|PATCH|DELETE /shared/:token/items/:itemId`
 
 Socket.io: `join_list` / `leave_list`, events `presence`, `item.created`, `item.updated`, `item.deleted`, `list.updated`, `members.changed`.

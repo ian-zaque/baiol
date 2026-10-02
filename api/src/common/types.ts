@@ -11,15 +11,25 @@ export type ListRow = {
   id: string;
   name: string;
   description: string;
+  currency: string | null;
   created_by_id: string;
+  share_token: string;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
 };
 
+export type GroceryType = {
+  id: string;
+  code: string;
+  name: string;
+  sort_order: number;
+};
+
 export type ItemRow = {
   id: string;
   list_id: string;
+  grocery_type_id: string | null;
   name: string;
   description: string;
   amount: string;
@@ -27,6 +37,7 @@ export type ItemRow = {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  grocery_types?: GroceryType | GroceryType[] | null;
 };
 
 export type MemberRow = {
@@ -53,12 +64,14 @@ export type PublicItem = {
   description: string;
   amount: string;
   price: number;
+  grocery_type: GroceryType | null;
 };
 
 export type PublicList = {
   id: string;
   name: string;
   description: string;
+  currency: string;
   items: PublicItem[];
   created_by_id: string;
   created_at: string;
@@ -73,6 +86,21 @@ export type PublicMember = {
   role: MemberRole;
 };
 
+export const ITEM_SELECT = '*, grocery_types(id, code, name, sort_order)';
+
+function groceryTypeOf(row: ItemRow): GroceryType | null {
+  const value = row.grocery_types;
+  if (!value) return null;
+  const type = Array.isArray(value) ? value[0] : value;
+  if (!type) return null;
+  return {
+    id: type.id,
+    code: type.code,
+    name: type.name,
+    sort_order: type.sort_order,
+  };
+}
+
 export function toPublicItem(row: ItemRow): PublicItem {
   return {
     id: row.id,
@@ -80,6 +108,7 @@ export function toPublicItem(row: ItemRow): PublicItem {
     description: row.description ?? '',
     amount: row.amount ?? '',
     price: Number(row.price ?? 0),
+    grocery_type: groceryTypeOf(row),
   };
 }
 
@@ -88,6 +117,7 @@ export function toPublicList(row: ListRow, items: ItemRow[] = []): PublicList {
     id: row.id,
     name: row.name,
     description: row.description ?? '',
+    currency: row.currency?.trim() || 'BRL',
     items: items.map(toPublicItem),
     created_by_id: row.created_by_id,
     created_at: row.created_at,
