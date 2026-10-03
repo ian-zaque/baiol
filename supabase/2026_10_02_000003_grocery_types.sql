@@ -29,7 +29,7 @@ on conflict (code) do update
       sort_order = excluded.sort_order;
 
 alter table public.items
-  add column if not exists grocery_type_id uuid references public.grocery_types (id);
+  add column if not exists grocery_type_id uuid references public.grocery_types (id) on delete set null;
 
 update public.items
 set grocery_type_id = null

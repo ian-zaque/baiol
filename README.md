@@ -19,11 +19,12 @@ Accounts live in Supabase Auth. The API uses the Supabase service role and is th
 ## Install
 
 1. Create a Supabase project.
-2. In the Supabase SQL editor, run [`supabase/schema.sql`](supabase/schema.sql).
-3. If the database was created from an older copy of that file, also run, in order:
-   - [`supabase/share_token.sql`](supabase/share_token.sql)
-   - [`supabase/currency.sql`](supabase/currency.sql)
-   - [`supabase/grocery_types.sql`](supabase/grocery_types.sql)
+2. In the Supabase SQL editor, run [`supabase/schema.sql`](supabase/schema.sql). That file is the full schema for a new database.
+3. If the database was created from an older copy of that file, run any migration you have not applied yet. Migrations are named `YYYY_MM_DD_00000N_name.sql`, for example `2026_09_29_000002_create_partners_social_media_links_logs_table.sql`. The number is six digits and starts at `000001` for that date. Run them by date, then by that number:
+   - [`supabase/2026_10_02_000001_share_token.sql`](supabase/2026_10_02_000001_share_token.sql)
+   - [`supabase/2026_10_02_000002_currency.sql`](supabase/2026_10_02_000002_currency.sql)
+   - [`supabase/2026_10_02_000003_grocery_types.sql`](supabase/2026_10_02_000003_grocery_types.sql)
+   - [`supabase/2026_10_02_000004_integrity.sql`](supabase/2026_10_02_000004_integrity.sql)
 4. In Supabase, under Authentication, enable email and password. For local testing, turn off **Confirm email** so a new account can sign in immediately.
 5. Copy the env examples and fill them in:
 

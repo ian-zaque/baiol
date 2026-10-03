@@ -6,9 +6,8 @@ NestJS API in front of Supabase. The mobile app talks to this API for lists, ite
 
 1. Create a Supabase project.
 2. Run [`../supabase/schema.sql`](../supabase/schema.sql) in the SQL editor.
-3. If the project already ran an older schema, also run [`../supabase/share_token.sql`](../supabase/share_token.sql).
-4. In Authentication settings, enable email/password. For local testing you can disable **Confirm email**.
-5. Copy `.env.example` to `.env` and fill:
+3. In Authentication settings, enable email/password. For local testing you can disable **Confirm email**.
+4. Copy `.env.example` to `.env` and fill:
    - `SUPABASE_URL`
    - `SUPABASE_SERVICE_ROLE_KEY` (Project Settings → API)
 

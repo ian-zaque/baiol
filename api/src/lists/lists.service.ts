@@ -118,24 +118,13 @@ export class ListsService {
         currency: resolveCurrency(dto.currency),
         created_by_id: user.id,
         share_token: this.newShareToken(),
+        list_members: [{ user_id: user.id, role: 'owner' }],
       })
-      .select('*')
+      .select('id, name, description, currency, created_by_id, share_token, created_at, updated_at, deleted_at')
       .single();
 
     if (error || !list) {
       throw new Error(error?.message ?? 'Could not create list');
-    }
-
-    const { error: memberError } = await this.supabase.client
-      .from('list_members')
-      .insert({
-        list_id: list.id,
-        user_id: user.id,
-        role: 'owner',
-      });
-
-    if (memberError) {
-      throw new Error(memberError.message);
     }
 
     return {

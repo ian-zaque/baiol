@@ -23,7 +23,12 @@ create table if not exists public.lists (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   description text not null default '',
-  currency text not null default 'BRL',
+  currency text not null default 'BRL' check (currency in (
+    'BRL', 'USD', 'EUR', 'GBP', 'JPY', 'CNY', 'INR', 'CAD', 'AUD', 'NZD',
+    'CHF', 'MXN', 'ARS', 'CLP', 'COP', 'PEN', 'UYU', 'BOB', 'PYG', 'KRW',
+    'ZAR', 'TRY', 'SEK', 'NOK', 'DKK', 'PLN', 'RUB', 'AED', 'SAR', 'ILS',
+    'HKD', 'SGD', 'THB', 'PHP', 'IDR', 'VND', 'EGP', 'NGN'
+  )),
   created_by_id uuid not null references public.profiles (id),
   share_token text not null unique default encode(gen_random_bytes(16), 'hex'),
   created_at timestamptz not null default now(),
@@ -32,7 +37,6 @@ create table if not exists public.lists (
 );
 
 create index if not exists lists_created_by_id_idx on public.lists (created_by_id);
-create unique index if not exists lists_share_token_idx on public.lists (share_token);
 
 -- ---------------------------------------------------------------------------
 -- Grocery types (catalog). Users select one; they do not edit this table.
@@ -70,7 +74,7 @@ on conflict (code) do update
 create table if not exists public.items (
   id uuid primary key default gen_random_uuid(),
   list_id uuid not null references public.lists (id) on delete cascade,
-  grocery_type_id uuid references public.grocery_types (id),
+  grocery_type_id uuid references public.grocery_types (id) on delete set null,
   name text not null,
   description text not null default '',
   amount text not null default '',
@@ -81,6 +85,7 @@ create table if not exists public.items (
 );
 
 create index if not exists items_list_id_idx on public.items (list_id);
+create index if not exists items_grocery_type_id_idx on public.items (grocery_type_id);
 
 update public.items
 set grocery_type_id = null
@@ -125,12 +130,12 @@ create table if not exists public.list_invites (
   invited_by_id uuid not null references public.profiles (id),
   status text not null default 'pending' check (status in ('pending', 'accepted', 'revoked')),
   expires_at timestamptz not null,
-  created_at timestamptz not null default now(),
-  unique (list_id, email)
+  created_at timestamptz not null default now()
 );
 
+create unique index if not exists list_invites_list_email_idx
+  on public.list_invites (list_id, lower(email));
 create index if not exists list_invites_email_idx on public.list_invites (lower(email));
-create index if not exists list_invites_token_idx on public.list_invites (token);
 
 -- ---------------------------------------------------------------------------
 -- updated_at helper
@@ -154,6 +159,24 @@ drop trigger if exists items_set_updated_at on public.items;
 create trigger items_set_updated_at
 before update on public.items
 for each row execute function public.set_updated_at();
+
+-- Item writes and the parent list timestamp commit together.
+create or replace function public.touch_list_from_item()
+returns trigger
+language plpgsql
+as $$
+begin
+  update public.lists
+  set updated_at = now()
+  where id = coalesce(new.list_id, old.list_id);
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists items_touch_list on public.items;
+create trigger items_touch_list
+after insert or update or delete on public.items
+for each row execute function public.touch_list_from_item();
 
 -- ---------------------------------------------------------------------------
 -- Auto-create a profile when a user registers
