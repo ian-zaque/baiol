@@ -64,19 +64,25 @@ npm install --prefix mobile
 
 ## Run
 
-Start the API and the Expo app in two terminals.
+Open two terminals in this repo folder (the folder that contains `api` and `mobile`). Leave both running.
+
+Terminal 1, the API:
 
 ```bash
 npm run start:dev --prefix api
 ```
 
-The API listens on port 3000. `GET http://localhost:3000/health` should return ok.
+Wait until it says it is listening. It uses port 3000. Open `http://localhost:3000/health` in the browser. You should see `{ "ok": true }`.
+
+Terminal 2, the app in the browser:
 
 ```bash
 npm run web --prefix mobile
 ```
 
-That opens the web app at `http://localhost:8081`. Other targets:
+Expo opens `http://localhost:8081`. Sign up, create a list, and use Share to copy a link.
+
+To use a phone or emulator instead of the browser, run one of these in terminal 2:
 
 ```bash
 npm start --prefix mobile
@@ -84,6 +90,31 @@ npm run android --prefix mobile
 npm run ios --prefix mobile
 ```
 
-`npm start` prints a QR code for the Expo Go or development client. Sign up in the app, create a list, and use Share to copy a link.
+`npm start --prefix mobile` prints a QR code for Expo Go. On a physical phone, set `EXPO_PUBLIC_API_URL` in `mobile/.env` to this computer’s LAN address before you start Expo, for example `http://192.168.0.10:3000`. The Android emulator uses `http://10.0.2.2:3000`.
 
 More API routes are listed in [`api/README.md`](api/README.md).
+
+## Test
+
+Install dependencies once:
+
+```bash
+npm install --prefix api
+npm install --prefix mobile
+```
+
+Run the automated tests:
+
+```bash
+npm test --prefix api
+npm run test:e2e --prefix api
+npm test --prefix mobile
+```
+
+To test the running app, apply the SQL migrations in Install, start the API, and open the web app (`npm run web --prefix mobile`). `GET http://localhost:3000/health` should return `{ "ok": true }`.
+
+1. Sign up and sign in. Change the display name.
+2. Create a list, rename it, then delete it.
+3. Add an item, mark it bought, then delete it.
+4. Open the share link in a private window and edit an item without signing in.
+5. On the login screen, use the eye button to show and hide the password. On a list, use the checkbox to mark an item bought.

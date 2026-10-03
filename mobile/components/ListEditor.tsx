@@ -25,6 +25,7 @@ import {
   useTheme,
 } from '@/components/ui';
 import { api } from '@/lib/api';
+import { sortItemsByChecked } from '@/lib/item-order';
 import { formatPrice, maskPrice, parsePrice } from '@/lib/money';
 import { GroceryType, PublicItem, PublicList } from '@/lib/types';
 
@@ -37,17 +38,13 @@ type ItemValues = {
   checked?: boolean;
 };
 
-function byStatus(items: PublicItem[]) {
-  return [...items].sort((a, b) => Number(Boolean(a.checked)) - Number(Boolean(b.checked)));
-}
-
 type ListRow =
   | { kind: 'header'; id: string; title: string }
   | { kind: 'item'; item: PublicItem };
 
 function rowsFor(items: PublicItem[], grouped: boolean): ListRow[] {
   if (!grouped) {
-    return byStatus(items).map((item) => ({ kind: 'item', item }));
+    return sortItemsByChecked(items).map((item) => ({ kind: 'item', item }));
   }
 
   const buckets = new Map<
@@ -71,7 +68,7 @@ function rowsFor(items: PublicItem[], grouped: boolean): ListRow[] {
     .sort((a, b) => a.sort - b.sort || a.title.localeCompare(b.title))
     .flatMap((bucket) => [
       { kind: 'header' as const, id: `header-${bucket.id}`, title: bucket.title },
-      ...byStatus(bucket.items).map((item) => ({ kind: 'item' as const, item })),
+      ...sortItemsByChecked(bucket.items).map((item) => ({ kind: 'item' as const, item })),
     ]);
 }
 

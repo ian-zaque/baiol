@@ -1,13 +1,8 @@
+import { resolveApiUrl } from './api-url';
 import { supabase } from './supabase';
 import { GroceryType, Profile, PublicItem, PublicList, PublicMember } from './types';
 
-function apiUrl() {
-  const raw = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000').trim().replace(/\/$/, '');
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) return raw;
-  return `https://${raw}`;
-}
-
-const API_URL = apiUrl();
+const API_URL = resolveApiUrl(process.env.EXPO_PUBLIC_API_URL);
 
 type ApiErrorBody = {
   message?: string | string[];
