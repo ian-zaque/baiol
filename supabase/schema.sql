@@ -79,6 +79,7 @@ create table if not exists public.items (
   description text not null default '',
   amount text not null default '',
   price numeric(12, 2) not null default 0,
+  checked boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   deleted_at timestamptz

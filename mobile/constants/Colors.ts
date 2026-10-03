@@ -32,6 +32,21 @@ export const COVER_COLORS = [
   ['#48C6F6', '#1898E2', '#0B56A0'],
 ] as const;
 
+export function midColor(lightest: string, darkest: string) {
+  const light = lightest.replace('#', '');
+  const dark = darkest.replace('#', '');
+  const channel = (start: number) =>
+    Math.round((parseInt(light.slice(start, start + 2), 16) + parseInt(dark.slice(start, start + 2), 16)) / 2)
+      .toString(16)
+      .padStart(2, '0');
+  return `#${channel(0)}${channel(2)}${channel(4)}`;
+}
+
+export function coverMid(id: string) {
+  const colors = coverColors(id);
+  return midColor(colors[0], colors[2]);
+}
+
 export function coverColors(id: string) {
   let hash = 0;
   for (let index = 0; index < id.length; index += 1) {

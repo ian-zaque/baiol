@@ -395,7 +395,7 @@ export class ListsService {
     if (dto.grocery_type_id) {
       await this.assertGroceryType(dto.grocery_type_id);
     }
-    const payload: Record<string, string | number | null> = {
+    const payload: Record<string, string | number | boolean | null> = {
       list_id: listId,
       name: dto.name.trim(),
       description: dto.description?.trim() ?? '',
@@ -445,11 +445,12 @@ export class ListsService {
   }
 
   private async patchItem(listId: string, itemId: string, dto: UpdateItemDto) {
-    const patch: Record<string, string | number | null> = {};
+    const patch: Record<string, string | number | boolean | null> = {};
     if (dto.name !== undefined) patch.name = dto.name.trim();
     if (dto.description !== undefined) patch.description = dto.description.trim();
     if (dto.amount !== undefined) patch.amount = dto.amount.trim();
     if (dto.price !== undefined) patch.price = dto.price;
+    if (dto.checked !== undefined) patch.checked = dto.checked;
     if (dto.grocery_type_id !== undefined) {
       if (dto.grocery_type_id) {
         await this.assertGroceryType(dto.grocery_type_id);

@@ -34,6 +34,7 @@ export type ItemRow = {
   description: string;
   amount: string;
   price: number | string;
+  checked?: boolean;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -64,6 +65,7 @@ export type PublicItem = {
   description: string;
   amount: string;
   price: number;
+  checked: boolean;
   grocery_type: GroceryType | null;
 };
 
@@ -108,6 +110,7 @@ export function toPublicItem(row: ItemRow): PublicItem {
     description: row.description ?? '',
     amount: row.amount ?? '',
     price: Number(row.price ?? 0),
+    checked: Boolean(row.checked),
     grocery_type: groceryTypeOf(row),
   };
 }

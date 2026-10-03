@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FadeFill } from '@/components/FadeFill';
+import { Icon } from '@/components/Icon';
 import Colors, { COVER_COLORS } from '@/constants/Colors';
 import { useLayout } from '@/components/layout';
 
@@ -119,24 +120,39 @@ export function TextField({
   multiline?: boolean;
 }) {
   const theme = useTheme();
+  const [hidden, setHidden] = useState(true);
+  const concealed = Boolean(secureTextEntry) && hidden;
   return (
     <View style={styles.field}>
       <Text style={[styles.label, { color: theme.text }]}>{label}</Text>
-      <TextInput
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor={theme.muted}
-        secureTextEntry={secureTextEntry}
-        keyboardType={keyboardType}
-        autoCapitalize={autoCapitalize}
-        multiline={multiline}
-        style={[
-          styles.input,
-          multiline ? styles.multiline : null,
-          { color: theme.text, backgroundColor: theme.input },
-        ]}
-      />
+      <View>
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor={theme.muted}
+          secureTextEntry={concealed}
+          keyboardType={keyboardType}
+          autoCapitalize={autoCapitalize}
+          multiline={multiline}
+          style={[
+            styles.input,
+            multiline ? styles.multiline : null,
+            secureTextEntry ? styles.inputWithAction : null,
+            { color: theme.text, backgroundColor: theme.input },
+          ]}
+        />
+        {secureTextEntry ? (
+          <Pressable
+            onPress={() => setHidden((current) => !current)}
+            accessibilityRole="button"
+            accessibilityLabel={hidden ? 'Show password' : 'Hide password'}
+            hitSlop={6}
+            style={styles.fieldAction}>
+            <Icon name={hidden ? 'show' : 'hide'} color={theme.muted} size={22} />
+          </Pressable>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -388,6 +404,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 14,
     fontSize: 16,
+  },
+  inputWithAction: {
+    paddingRight: 48,
+  },
+  fieldAction: {
+    position: 'absolute',
+    right: 4,
+    top: 0,
+    bottom: 0,
+    width: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   multiline: {
     minHeight: 96,

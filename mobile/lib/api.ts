@@ -17,6 +17,7 @@ type ItemBody = {
   amount?: string;
   price?: number;
   grocery_type_id?: string | null;
+  checked?: boolean;
 };
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {

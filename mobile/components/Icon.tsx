@@ -12,6 +12,9 @@ const ICONS = {
   account: { ios: 'person.circle', android: 'person', web: 'person' },
   collapse: { ios: 'chevron.left', android: 'chevron_left', web: 'chevron_left' },
   expand: { ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' },
+  show: { ios: 'eye', android: 'visibility', web: 'visibility' },
+  hide: { ios: 'eye.slash', android: 'visibility_off', web: 'visibility_off' },
+  check: { ios: 'checkmark', android: 'check', web: 'check' },
 } as const;
 
 export type IconName = keyof typeof ICONS;

@@ -1,5 +1,6 @@
 import { Transform } from 'class-transformer';
 import {
+  IsBoolean,
   IsIn,
   IsNumber,
   IsOptional,
@@ -75,6 +76,10 @@ export class CreateItemDto {
   @Transform(({ value }) => (value === '' ? null : value))
   @IsUUID()
   grocery_type_id?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  checked?: boolean;
 }
 
 export class UpdateItemDto {
@@ -102,4 +107,8 @@ export class UpdateItemDto {
   @Transform(({ value }) => (value === '' ? null : value))
   @IsUUID()
   grocery_type_id?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  checked?: boolean;
 }

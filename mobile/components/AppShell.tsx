@@ -7,7 +7,7 @@ import { Icon, IconButton } from '@/components/Icon';
 import { Logo } from '@/components/Logo';
 import { SidebarProvider, SIDEBAR_WIDTH, useLayout } from '@/components/layout';
 import { useTheme } from '@/components/ui';
-import { COVER_COLORS, coverColors } from '@/constants/Colors';
+import { COVER_COLORS, coverMid } from '@/constants/Colors';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { PublicList } from '@/lib/types';
@@ -186,7 +186,7 @@ function ListRow({
           backgroundColor: !collapsed && (active || hovered || pressed) ? theme.elevated : 'transparent',
         },
       ]}>
-      <Cover letter={list.name.trim().charAt(0).toUpperCase() || 'B'} color={coverColors(list.id)[1]} />
+      <Cover letter={list.name.trim().charAt(0).toUpperCase() || 'B'} color={coverMid(list.id)} />
       {collapsed ? null : (
         <View style={{ flex: 1 }}>
           <Text

@@ -11,6 +11,7 @@ export type PublicItem = {
   description: string;
   amount: string;
   price: number;
+  checked?: boolean;
   grocery_type?: GroceryType | null;
 };
 

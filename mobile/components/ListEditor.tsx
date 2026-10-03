@@ -34,7 +34,12 @@ type ItemValues = {
   amount: string;
   price: number;
   grocery_type_id: string | null;
+  checked?: boolean;
 };
+
+function byStatus(items: PublicItem[]) {
+  return [...items].sort((a, b) => Number(Boolean(a.checked)) - Number(Boolean(b.checked)));
+}
 
 type ListRow =
   | { kind: 'header'; id: string; title: string }
@@ -42,7 +47,7 @@ type ListRow =
 
 function rowsFor(items: PublicItem[], grouped: boolean): ListRow[] {
   if (!grouped) {
-    return items.map((item) => ({ kind: 'item', item }));
+    return byStatus(items).map((item) => ({ kind: 'item', item }));
   }
 
   const buckets = new Map<
@@ -66,7 +71,7 @@ function rowsFor(items: PublicItem[], grouped: boolean): ListRow[] {
     .sort((a, b) => a.sort - b.sort || a.title.localeCompare(b.title))
     .flatMap((bucket) => [
       { kind: 'header' as const, id: `header-${bucket.id}`, title: bucket.title },
-      ...bucket.items.map((item) => ({ kind: 'item' as const, item })),
+      ...byStatus(bucket.items).map((item) => ({ kind: 'item' as const, item })),
     ]);
 }
 
@@ -109,6 +114,22 @@ export function ListEditor({
       void queryClient.invalidateQueries({ queryKey });
     },
   });
+
+  async function toggleChecked(item: PublicItem) {
+    try {
+      await onUpdateItem(item.id, {
+        name: item.name,
+        description: item.description,
+        amount: item.amount,
+        price: Number(item.price),
+        grocery_type_id: item.grocery_type?.id ?? null,
+        checked: !item.checked,
+      });
+      await queryClient.invalidateQueries({ queryKey });
+    } catch (error) {
+      Alert.alert('Could not update item', (error as Error).message);
+    }
+  }
 
   async function confirmDelete() {
     if (!itemToDelete) return;
@@ -205,6 +226,7 @@ export function ListEditor({
                     item={row.item}
                     currency={currency}
                     showType={!grouped}
+                    onToggle={() => void toggleChecked(row.item)}
                     onEdit={() => setEditingItem(row.item)}
                     onDelete={() => setItemToDelete(row.item)}
                   />
@@ -291,16 +313,19 @@ function ItemRow({
   item,
   currency,
   showType,
+  onToggle,
   onEdit,
   onDelete,
 }: {
   item: PublicItem;
   currency?: string;
   showType: boolean;
+  onToggle: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
   const theme = useTheme();
+  const checked = Boolean(item.checked);
   const meta = [item.amount, showType ? item.grocery_type?.name : null, item.description]
     .filter(Boolean)
     .join(' · ');
@@ -316,10 +341,36 @@ function ItemRow({
         paddingVertical: 10,
         paddingLeft: 10,
         paddingRight: 4,
+        opacity: checked ? 0.72 : 1,
       }}>
+      <Pressable
+        onPress={onToggle}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked }}
+        accessibilityLabel={checked ? `Mark ${item.name} as still needed` : `Mark ${item.name} as bought`}
+        hitSlop={8}
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: 6,
+          borderWidth: 2,
+          borderColor: checked ? theme.tint : theme.muted,
+          backgroundColor: checked ? theme.tint : 'transparent',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}>
+        {checked ? <Icon name="check" color={theme.onTint} size={16} /> : null}
+      </Pressable>
       <GroceryMark name={item.name} type={item.grocery_type} seed={item.id} />
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text numberOfLines={1} style={{ color: theme.text, fontSize: 16, fontWeight: '700' }}>
+        <Text
+          numberOfLines={1}
+          style={{
+            color: checked ? theme.muted : theme.text,
+            fontSize: 16,
+            fontWeight: '700',
+            textDecorationLine: checked ? 'line-through' : 'none',
+          }}>
           {item.name}
         </Text>
         {meta ? (
@@ -327,7 +378,7 @@ function ItemRow({
             {meta}
           </Text>
         ) : null}
-        <Text style={{ color: theme.text, marginTop: 4, fontWeight: '700' }}>
+        <Text style={{ color: checked ? theme.muted : theme.text, marginTop: 4, fontWeight: '700' }}>
           {formatPrice(Number(item.price), currency)}
         </Text>
       </View>
