@@ -25,7 +25,7 @@ import { GroceryTypeRepository } from '../persistence/grocery-type.repository';
 import { ItemRepository } from '../persistence/item.repository';
 import { ListRepository } from '../persistence/list.repository';
 import { MemberRepository } from '../persistence/member.repository';
-import { ProfileRepository } from '../persistence/profile.repository';
+import { UserRepository } from '../persistence/user.repository';
 import { REALTIME_EVENTS } from '../realtime/realtime.events';
 import { resolveCurrency } from './currencies';
 import { CreateItemDto, CreateListDto, UpdateItemDto, UpdateListDto } from './dto/list.dto';
@@ -33,7 +33,7 @@ import { CreateItemDto, CreateListDto, UpdateItemDto, UpdateListDto } from './dt
 @Injectable()
 export class ListsService {
   constructor(
-    private readonly profiles: ProfileRepository,
+    private readonly users: UserRepository,
     private readonly listStore: ListRepository,
     private readonly itemStore: ItemRepository,
     private readonly memberStore: MemberRepository,
@@ -191,8 +191,8 @@ export class ListsService {
       return [];
     }
 
-    const profiles = await fromPersistence(this.profiles.findByIds(userIds));
-    const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
+    const accounts = await fromPersistence(this.users.findByIds(userIds));
+    const profileById = new Map(accounts.map((account) => [account.id, account]));
 
     return members.map((member) => {
       const profile = profileById.get(member.user_id);
@@ -231,7 +231,7 @@ export class ListsService {
   }
 
   async ensureProfile(user: AuthUser): Promise<ProfileRow> {
-    const profile = await fromPersistence(this.profiles.findById(user.id));
+    const profile = await fromPersistence(this.users.findById(user.id));
     if (!profile) {
       throw new NotFoundException('Profile not found');
     }
@@ -441,7 +441,7 @@ export class ListsService {
   }
 
   private async actorFor(userId: string): Promise<AuditActor> {
-    const profile = await fromPersistence(this.profiles.findById(userId));
+    const profile = await fromPersistence(this.users.findById(userId));
     if (!profile) {
       return { id: userId, name: 'unknown' };
     }

@@ -1,11 +1,13 @@
 export type MemberRole = 'owner' | 'editor';
 
-export type ProfileRow = {
+export type UserRow = {
   id: string;
   email: string;
   display_name: string | null;
   created_at: string;
 };
+
+export type ProfileRow = UserRow;
 
 export type ListRow = {
   id: string;
@@ -87,8 +89,6 @@ export type PublicMember = {
   display_name: string;
   role: MemberRole;
 };
-
-export const ITEM_SELECT = '*, grocery_types(id, code, name, sort_order)';
 
 function groceryTypeOf(row: ItemRow): GroceryType | null {
   const value = row.grocery_types;

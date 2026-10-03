@@ -7,10 +7,10 @@ import {
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { auditCreate } from '../common/audit';
 import { fromPersistence } from '../common/map-persistence-error';
-import { ProfileRow, displayNameOf } from '../common/types';
+import { UserRow, displayNameOf } from '../common/types';
 import { PersistenceError } from '../persistence/persistence.error';
-import { ProfileRepository } from '../persistence/profile.repository';
 import { SessionRepository } from '../persistence/session.repository';
+import { UserRepository } from '../persistence/user.repository';
 import { hashPassword, verifyPassword } from './password';
 import { TokenService } from './token.service';
 
@@ -29,7 +29,7 @@ export type AuthResponse = {
 @Injectable()
 export class AuthService {
   constructor(
-    private readonly profiles: ProfileRepository,
+    private readonly users: UserRepository,
     private readonly sessions: SessionRepository,
     private readonly tokens: TokenService,
   ) {}
@@ -41,19 +41,22 @@ export class AuthService {
       throw new BadRequestException('Password must be at least 6 characters');
     }
     const displayName = input.displayName.trim() || email.split('@')[0];
-    const existing = await fromPersistence(this.profiles.findActiveByEmail(email));
+    const existing = await fromPersistence(this.users.findActiveByEmail(email));
     if (existing) {
       throw new ConflictException('An account with this email already exists');
     }
 
     const id = randomUUID();
+    const profileId = randomUUID();
     const actor = { id, name: displayName };
-    let profile: ProfileRow;
+    let account: UserRow;
     try {
-      profile = await this.profiles.insert({
+      account = await this.users.insert({
         actorId: id,
-        action: auditCreate(actor, 'profile', id),
+        userAction: auditCreate(actor, 'user', id),
+        profileAction: auditCreate(actor, 'profile', profileId),
         id,
+        profileId,
         email,
         displayName,
         passwordHash: await hashPassword(password),
@@ -66,16 +69,16 @@ export class AuthService {
       throw error;
     }
 
-    return this.issue(profile);
+    return this.issue(account);
   }
 
   async login(input: { email: string; password: string }): Promise<AuthResponse> {
     const email = normalizeEmail(input.email);
-    const profile = await fromPersistence(this.profiles.findActiveByEmail(email));
-    if (!profile || !(await verifyPassword(input.password, profile.password_hash))) {
+    const account = await fromPersistence(this.users.findActiveByEmail(email));
+    if (!account || !(await verifyPassword(input.password, account.password_hash))) {
       throw new UnauthorizedException('Invalid email or password');
     }
-    return this.issue(profile);
+    return this.issue(account);
   }
 
   async refresh(refreshToken: string): Promise<AuthResponse> {
@@ -85,12 +88,12 @@ export class AuthService {
     if (!session) {
       throw new UnauthorizedException('Invalid or expired session');
     }
-    const profile = await fromPersistence(this.profiles.findById(session.profile_id));
-    if (!profile) {
+    const account = await fromPersistence(this.users.findById(session.user_id));
+    if (!account) {
       throw new UnauthorizedException('Invalid or expired session');
     }
     await fromPersistence(this.sessions.revoke(session.id));
-    return this.issue(profile);
+    return this.issue(account);
   }
 
   async logout(refreshToken: string): Promise<void> {
@@ -102,25 +105,25 @@ export class AuthService {
     }
   }
 
-  private async issue(profile: ProfileRow): Promise<AuthResponse> {
+  private async issue(account: UserRow): Promise<AuthResponse> {
     const refreshToken = randomBytes(32).toString('base64url');
     const expiresAt = new Date(Date.now() + this.tokens.refreshTtlSeconds * 1000);
     await fromPersistence(
       this.sessions.insert({
-        profileId: profile.id,
+        userId: account.id,
         tokenHash: hashToken(refreshToken),
         expiresAt,
       }),
     );
     return {
-      access_token: await this.tokens.sign({ id: profile.id, email: profile.email }),
+      access_token: await this.tokens.sign({ id: account.id, email: account.email }),
       refresh_token: refreshToken,
       expires_in: this.tokens.accessTtlSeconds,
       profile: {
-        id: profile.id,
-        email: profile.email,
-        display_name: displayNameOf(profile),
-        created_at: profile.created_at,
+        id: account.id,
+        email: account.email,
+        display_name: displayNameOf(account),
+        created_at: account.created_at,
       },
     };
   }

@@ -5,6 +5,7 @@ import { ListRepository } from '../../persistence/list.repository';
 import { MemberRepository } from '../../persistence/member.repository';
 import { ProfileRepository } from '../../persistence/profile.repository';
 import { SessionRepository } from '../../persistence/session.repository';
+import { UserRepository } from '../../persistence/user.repository';
 import { SupabaseClientProvider } from './supabase-client.provider';
 import { SupabaseGroceryTypeRepository } from './supabase-grocery-type.repository';
 import { SupabaseItemRepository } from './supabase-item.repository';
@@ -12,11 +13,13 @@ import { SupabaseListRepository } from './supabase-list.repository';
 import { SupabaseMemberRepository } from './supabase-member.repository';
 import { SupabaseProfileRepository } from './supabase-profile.repository';
 import { SupabaseSessionRepository } from './supabase-session.repository';
+import { SupabaseUserRepository } from './supabase-user.repository';
 
 @Global()
 @Module({
   providers: [
     SupabaseClientProvider,
+    { provide: UserRepository, useClass: SupabaseUserRepository },
     { provide: ProfileRepository, useClass: SupabaseProfileRepository },
     { provide: SessionRepository, useClass: SupabaseSessionRepository },
     { provide: ListRepository, useClass: SupabaseListRepository },
@@ -25,6 +28,7 @@ import { SupabaseSessionRepository } from './supabase-session.repository';
     { provide: GroceryTypeRepository, useClass: SupabaseGroceryTypeRepository },
   ],
   exports: [
+    UserRepository,
     ProfileRepository,
     SessionRepository,
     ListRepository,

@@ -35,3 +35,10 @@ export async function callAudit<T>(
 export function missingGrocerySchema(message: string): boolean {
   return message.includes('grocery_types') || message.includes('grocery_type_id');
 }
+
+export function one<T>(value: T | T[] | null | undefined): T | null {
+  if (value == null) {
+    return null;
+  }
+  return Array.isArray(value) ? (value[0] ?? null) : value;
+}

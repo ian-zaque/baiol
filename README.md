@@ -33,6 +33,7 @@ Accounts are created and checked by the API. Postgres stores the data. The API r
    - [`supabase/2026_10_03_000006_list_members_log.sql`](supabase/2026_10_03_000006_list_members_log.sql)
    - [`supabase/2026_10_03_000007_list_invites_log.sql`](supabase/2026_10_03_000007_list_invites_log.sql)
    - [`supabase/2026_10_03_000008_api_auth.sql`](supabase/2026_10_03_000008_api_auth.sql)
+   - [`supabase/2026_10_03_000009_users_and_ids.sql`](supabase/2026_10_03_000009_users_and_ids.sql)
 4. Copy the env examples and fill them in:
 
 ```bash

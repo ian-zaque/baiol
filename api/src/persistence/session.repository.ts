@@ -1,11 +1,11 @@
 export type SessionRow = {
   id: string;
-  profile_id: string;
+  user_id: string;
   expires_at: string;
 };
 
 export type SessionInsert = {
-  profileId: string;
+  userId: string;
   tokenHash: string;
   expiresAt: Date;
 };

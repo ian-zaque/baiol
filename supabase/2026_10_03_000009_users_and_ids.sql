@@ -1,200 +1,450 @@
--- Baiol grocery lists schema
--- Run this in the Supabase SQL editor after creating a project.
--- users is the account. profiles is the public face of that account.
--- id is the bigint primary key. uuid is the public identifier.
+-- Split accounts into users and profiles, and replace uuid primary keys with
+-- bigint id plus a public uuid. Existing uuid values are kept as uuid.
+-- Safe to run more than once. A new database should run schema.sql instead.
 
-create extension if not exists "pgcrypto";
+create or replace function public._baiol_migrate_users_and_ids()
+returns void
+language plpgsql
+as $fn$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'users'
+      and column_name = 'id'
+      and data_type = 'bigint'
+  ) then
+    return;
+  end if;
 
--- ---------------------------------------------------------------------------
--- Users (accounts)
--- ---------------------------------------------------------------------------
-create table if not exists public.users (
-  id bigint generated always as identity primary key,
-  uuid uuid not null unique default gen_random_uuid(),
-  email text not null,
-  password_hash text not null,
-  created_at timestamptz not null default now(),
-  deleted_at timestamptz
-);
+  if not exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'profiles'
+      and column_name = 'password_hash'
+      and data_type = 'text'
+  ) or not exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'profiles'
+      and column_name = 'id'
+      and data_type = 'uuid'
+  ) then
+    raise exception 'Run supabase/schema.sql on a new database';
+  end if;
 
-create unique index if not exists users_email_active_idx
-  on public.users (lower(email))
-  where deleted_at is null;
+  execute $sql$
+    create table public.users_next (
+      id bigint generated always as identity primary key,
+      uuid uuid not null unique,
+      email text not null,
+      password_hash text not null,
+      created_at timestamptz not null default now(),
+      deleted_at timestamptz
+    )
+  $sql$;
+  execute $sql$
+    insert into public.users_next (uuid, email, password_hash, created_at, deleted_at)
+    select id, lower(email), password_hash, created_at, deleted_at
+    from public.profiles
+  $sql$;
 
--- ---------------------------------------------------------------------------
--- Profiles (public face). One row per user.
--- ---------------------------------------------------------------------------
-create table if not exists public.profiles (
-  id bigint generated always as identity primary key,
-  uuid uuid not null unique default gen_random_uuid(),
-  user_id bigint not null unique references public.users (id) on delete cascade,
-  display_name text,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  deleted_at timestamptz
-);
+  execute $sql$
+    create table public.profiles_next (
+      id bigint generated always as identity primary key,
+      uuid uuid not null unique default gen_random_uuid(),
+      user_id bigint not null unique references public.users_next (id) on delete cascade,
+      display_name text,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      deleted_at timestamptz
+    )
+  $sql$;
+  execute $sql$
+    insert into public.profiles_next (user_id, display_name, created_at, updated_at, deleted_at)
+    select u.id, p.display_name, p.created_at, p.created_at, p.deleted_at
+    from public.profiles p
+    join public.users_next u on u.uuid = p.id
+  $sql$;
 
--- ---------------------------------------------------------------------------
--- Lists
--- ---------------------------------------------------------------------------
-create table if not exists public.lists (
-  id bigint generated always as identity primary key,
-  uuid uuid not null unique default gen_random_uuid(),
-  name text not null,
-  description text not null default '',
-  currency text not null default 'BRL' check (currency in (
-    'BRL', 'USD', 'EUR', 'GBP', 'JPY', 'CNY', 'INR', 'CAD', 'AUD', 'NZD',
-    'CHF', 'MXN', 'ARS', 'CLP', 'COP', 'PEN', 'UYU', 'BOB', 'PYG', 'KRW',
-    'ZAR', 'TRY', 'SEK', 'NOK', 'DKK', 'PLN', 'RUB', 'AED', 'SAR', 'ILS',
-    'HKD', 'SGD', 'THB', 'PHP', 'IDR', 'VND', 'EGP', 'NGN'
-  )),
-  created_by_id bigint not null references public.users (id),
-  share_token text not null default encode(gen_random_bytes(16), 'hex'),
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  deleted_at timestamptz
-);
+  execute $sql$
+    create table public.lists_next (
+      id bigint generated always as identity primary key,
+      uuid uuid not null unique,
+      name text not null,
+      description text not null default '',
+      currency text not null default 'BRL',
+      created_by_id bigint not null references public.users_next (id),
+      share_token text not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      deleted_at timestamptz
+    )
+  $sql$;
+  execute $sql$
+    insert into public.lists_next (
+      uuid, name, description, currency, created_by_id, share_token, created_at, updated_at, deleted_at
+    )
+    select l.id, l.name, l.description, l.currency, u.id, l.share_token, l.created_at, l.updated_at, l.deleted_at
+    from public.lists l
+    join public.users_next u on u.uuid = l.created_by_id
+  $sql$;
 
-create index if not exists lists_created_by_id_idx on public.lists (created_by_id);
-create unique index if not exists lists_share_token_active_idx
-  on public.lists (share_token)
-  where deleted_at is null;
+  execute $sql$
+    create table public.grocery_types_next (
+      id bigint generated always as identity primary key,
+      uuid uuid not null unique,
+      code text not null,
+      name text not null,
+      sort_order integer not null,
+      deleted_at timestamptz
+    )
+  $sql$;
+  execute $sql$
+    insert into public.grocery_types_next (uuid, code, name, sort_order, deleted_at)
+    select id, code, name, sort_order, deleted_at
+    from public.grocery_types
+  $sql$;
 
--- ---------------------------------------------------------------------------
--- Grocery types (catalog). Users select one; they do not edit this table.
--- ---------------------------------------------------------------------------
-create table if not exists public.grocery_types (
-  id bigint generated always as identity primary key,
-  uuid uuid not null unique default gen_random_uuid(),
-  code text not null,
-  name text not null,
-  sort_order integer not null,
-  deleted_at timestamptz
-);
+  execute $sql$
+    create table public.items_next (
+      id bigint generated always as identity primary key,
+      uuid uuid not null unique,
+      list_id bigint not null references public.lists_next (id) on delete cascade,
+      grocery_type_id bigint references public.grocery_types_next (id) on delete set null,
+      name text not null,
+      description text not null default '',
+      amount text not null default '',
+      price numeric(12, 2) not null default 0,
+      checked boolean not null default false,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      deleted_at timestamptz
+    )
+  $sql$;
+  execute $sql$
+    insert into public.items_next (
+      uuid, list_id, grocery_type_id, name, description, amount, price, checked, created_at, updated_at, deleted_at
+    )
+    select i.id, l.id, g.id, i.name, i.description, i.amount, i.price, coalesce(i.checked, false),
+      i.created_at, i.updated_at, i.deleted_at
+    from public.items i
+    join public.lists_next l on l.uuid = i.list_id
+    left join public.grocery_types_next g on g.uuid = i.grocery_type_id
+  $sql$;
 
-create unique index if not exists grocery_types_code_active_idx
-  on public.grocery_types (code)
-  where deleted_at is null;
+  execute $sql$
+    create table public.list_members_next (
+      id bigint generated always as identity primary key,
+      uuid uuid not null unique default gen_random_uuid(),
+      list_id bigint not null references public.lists_next (id) on delete cascade,
+      user_id bigint not null references public.users_next (id) on delete cascade,
+      role text not null,
+      created_at timestamptz not null default now(),
+      deleted_at timestamptz
+    )
+  $sql$;
+  execute $sql$
+    insert into public.list_members_next (list_id, user_id, role, created_at, deleted_at)
+    select l.id, u.id, m.role, m.created_at, m.deleted_at
+    from public.list_members m
+    join public.lists_next l on l.uuid = m.list_id
+    join public.users_next u on u.uuid = m.user_id
+  $sql$;
 
-insert into public.grocery_types (code, name, sort_order)
-values
-  ('meat', 'Meat', 10),
-  ('protein', 'Protein', 20),
-  ('dairy', 'Dairy', 30),
-  ('bakery', 'Bakery', 40),
-  ('fruits', 'Fruits', 50),
-  ('vegetables', 'Vegetables', 60),
-  ('grains', 'Grains', 70),
-  ('canned_foods', 'Canned Foods', 80),
-  ('condiments', 'Condiments', 90),
-  ('snacks', 'Snacks', 100),
-  ('beverages', 'Beverages', 110),
-  ('household', 'Household', 120),
-  ('personal_care', 'Personal Care', 130),
-  ('other', 'Other', 140)
-on conflict (code) where deleted_at is null do update
-  set name = excluded.name,
-      sort_order = excluded.sort_order;
+  execute $sql$
+    create table public.list_invites_next (
+      id bigint generated always as identity primary key,
+      uuid uuid not null unique,
+      list_id bigint not null references public.lists_next (id) on delete cascade,
+      email text not null,
+      token text not null,
+      invited_by_id bigint not null references public.users_next (id),
+      status text not null default 'pending',
+      expires_at timestamptz not null,
+      created_at timestamptz not null default now(),
+      deleted_at timestamptz
+    )
+  $sql$;
+  execute $sql$
+    insert into public.list_invites_next (
+      uuid, list_id, email, token, invited_by_id, status, expires_at, created_at, deleted_at
+    )
+    select i.id, l.id, i.email, i.token, u.id, i.status, i.expires_at, i.created_at, i.deleted_at
+    from public.list_invites i
+    join public.lists_next l on l.uuid = i.list_id
+    join public.users_next u on u.uuid = i.invited_by_id
+  $sql$;
 
--- ---------------------------------------------------------------------------
--- Items
--- ---------------------------------------------------------------------------
-create table if not exists public.items (
-  id bigint generated always as identity primary key,
-  uuid uuid not null unique default gen_random_uuid(),
-  list_id bigint not null references public.lists (id) on delete cascade,
-  grocery_type_id bigint references public.grocery_types (id) on delete set null,
-  name text not null,
-  description text not null default '',
-  amount text not null default '',
-  price numeric(12, 2) not null default 0,
-  checked boolean not null default false,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  deleted_at timestamptz
-);
+  execute $sql$
+    create table public.sessions_next (
+      id bigint generated always as identity primary key,
+      uuid uuid not null unique,
+      user_id bigint not null references public.users_next (id) on delete cascade,
+      token_hash text not null,
+      expires_at timestamptz not null,
+      created_at timestamptz not null default now(),
+      revoked_at timestamptz
+    )
+  $sql$;
+  execute $sql$
+    insert into public.sessions_next (uuid, user_id, token_hash, expires_at, created_at, revoked_at)
+    select s.id, u.id, s.token_hash, s.expires_at, s.created_at, s.revoked_at
+    from public.sessions s
+    join public.users_next u on u.uuid = s.profile_id
+  $sql$;
 
-create index if not exists items_list_id_idx on public.items (list_id);
-create index if not exists items_grocery_type_id_idx on public.items (grocery_type_id);
+  execute $sql$
+    create table public.users_log_next (
+      id bigint generated always as identity primary key,
+      uuid uuid not null unique,
+      user_id bigint not null,
+      updated_by_id bigint references public.users_next (id) on delete set null,
+      action text not null,
+      email text not null,
+      created_at timestamptz,
+      deleted_at timestamptz
+    )
+  $sql$;
+  execute $sql$
+    insert into public.users_log_next (uuid, user_id, updated_by_id, action, email, created_at, deleted_at)
+    select pl.id, u.id, actor.id, pl.action, lower(pl.email), pl.created_at, pl.deleted_at
+    from public.profiles_log pl
+    join public.users_next u on u.uuid = pl.profile_id
+    left join public.users_next actor on actor.uuid = pl.updated_by_id
+  $sql$;
 
-update public.items
-set grocery_type_id = null
-where grocery_type_id in (
-  select id
-  from public.grocery_types
-  where code not in (
-    'meat', 'protein', 'dairy', 'bakery', 'fruits', 'vegetables', 'grains',
-    'canned_foods', 'condiments', 'snacks', 'beverages', 'household',
-    'personal_care', 'other'
-  )
-);
+  execute $sql$
+    create table public.profiles_log_next (
+      id bigint generated always as identity primary key,
+      uuid uuid not null unique default gen_random_uuid(),
+      profile_id bigint not null,
+      updated_by_id bigint references public.users_next (id) on delete set null,
+      action text not null,
+      display_name text,
+      created_at timestamptz,
+      updated_at timestamptz,
+      deleted_at timestamptz
+    )
+  $sql$;
+  execute $sql$
+    insert into public.profiles_log_next (
+      profile_id, updated_by_id, action, display_name, created_at, updated_at, deleted_at
+    )
+    select prof.id, actor.id, pl.action, pl.display_name, pl.created_at, null, pl.deleted_at
+    from public.profiles_log pl
+    join public.users_next u on u.uuid = pl.profile_id
+    join public.profiles_next prof on prof.user_id = u.id
+    left join public.users_next actor on actor.uuid = pl.updated_by_id
+  $sql$;
 
-delete from public.grocery_types
-where code not in (
-  'meat', 'protein', 'dairy', 'bakery', 'fruits', 'vegetables', 'grains',
-  'canned_foods', 'condiments', 'snacks', 'beverages', 'household',
-  'personal_care', 'other'
-);
+  execute $sql$
+    create table public.lists_log_next (
+      id bigint generated always as identity primary key,
+      uuid uuid not null unique,
+      list_id bigint not null,
+      updated_by_id bigint references public.users_next (id) on delete set null,
+      action text not null,
+      name text not null,
+      description text not null,
+      currency text not null,
+      created_by_id bigint not null,
+      share_token text not null,
+      created_at timestamptz,
+      updated_at timestamptz,
+      deleted_at timestamptz
+    )
+  $sql$;
+  execute $sql$
+    insert into public.lists_log_next (
+      uuid, list_id, updated_by_id, action, name, description, currency, created_by_id,
+      share_token, created_at, updated_at, deleted_at
+    )
+    select ll.id, l.id, actor.id, ll.action, ll.name, ll.description, ll.currency, owner.id,
+      ll.share_token, ll.created_at, ll.updated_at, ll.deleted_at
+    from public.lists_log ll
+    join public.lists_next l on l.uuid = ll.list_id
+    join public.users_next owner on owner.uuid = ll.created_by_id
+    left join public.users_next actor on actor.uuid = ll.updated_by_id
+  $sql$;
 
--- ---------------------------------------------------------------------------
--- Membership
--- ---------------------------------------------------------------------------
-create table if not exists public.list_members (
-  id bigint generated always as identity primary key,
-  uuid uuid not null unique default gen_random_uuid(),
-  list_id bigint not null references public.lists (id) on delete cascade,
-  user_id bigint not null references public.users (id) on delete cascade,
-  role text not null check (role in ('owner', 'editor')),
-  created_at timestamptz not null default now(),
-  deleted_at timestamptz
-);
+  execute $sql$
+    create table public.grocery_types_log_next (
+      id bigint generated always as identity primary key,
+      uuid uuid not null unique,
+      grocery_type_id bigint not null,
+      updated_by_id bigint references public.users_next (id) on delete set null,
+      action text not null,
+      code text not null,
+      name text not null,
+      sort_order integer not null,
+      deleted_at timestamptz
+    )
+  $sql$;
+  execute $sql$
+    insert into public.grocery_types_log_next (
+      uuid, grocery_type_id, updated_by_id, action, code, name, sort_order, deleted_at
+    )
+    select gl.id, g.id, actor.id, gl.action, gl.code, gl.name, gl.sort_order, gl.deleted_at
+    from public.grocery_types_log gl
+    join public.grocery_types_next g on g.uuid = gl.grocery_type_id
+    left join public.users_next actor on actor.uuid = gl.updated_by_id
+  $sql$;
 
-create unique index if not exists list_members_list_user_active_idx
-  on public.list_members (list_id, user_id)
-  where deleted_at is null;
-create index if not exists list_members_user_id_idx on public.list_members (user_id);
+  execute $sql$
+    create table public.items_log_next (
+      id bigint generated always as identity primary key,
+      uuid uuid not null unique,
+      item_id bigint not null,
+      updated_by_id bigint references public.users_next (id) on delete set null,
+      action text not null,
+      list_id bigint not null,
+      grocery_type_id bigint,
+      name text not null,
+      description text not null,
+      amount text not null,
+      price numeric(12, 2) not null,
+      checked boolean not null,
+      created_at timestamptz,
+      updated_at timestamptz,
+      deleted_at timestamptz
+    )
+  $sql$;
+  execute $sql$
+    insert into public.items_log_next (
+      uuid, item_id, updated_by_id, action, list_id, grocery_type_id, name, description,
+      amount, price, checked, created_at, updated_at, deleted_at
+    )
+    select il.id, item.id, actor.id, il.action, l.id, g.id, il.name, il.description,
+      il.amount, il.price, il.checked, il.created_at, il.updated_at, il.deleted_at
+    from public.items_log il
+    join public.items_next item on item.uuid = il.item_id
+    join public.lists_next l on l.uuid = il.list_id
+    left join public.grocery_types_next g on g.uuid = il.grocery_type_id
+    left join public.users_next actor on actor.uuid = il.updated_by_id
+  $sql$;
 
--- ---------------------------------------------------------------------------
--- Invites
--- ---------------------------------------------------------------------------
-create table if not exists public.list_invites (
-  id bigint generated always as identity primary key,
-  uuid uuid not null unique default gen_random_uuid(),
-  list_id bigint not null references public.lists (id) on delete cascade,
-  email text not null,
-  token text not null,
-  invited_by_id bigint not null references public.users (id),
-  status text not null default 'pending' check (status in ('pending', 'accepted', 'revoked')),
-  expires_at timestamptz not null,
-  created_at timestamptz not null default now(),
-  deleted_at timestamptz
-);
+  execute $sql$
+    create table public.list_members_log_next (
+      id bigint generated always as identity primary key,
+      uuid uuid not null unique,
+      list_id bigint not null,
+      user_id bigint not null,
+      updated_by_id bigint references public.users_next (id) on delete set null,
+      action text not null,
+      role text not null,
+      created_at timestamptz,
+      deleted_at timestamptz
+    )
+  $sql$;
+  execute $sql$
+    insert into public.list_members_log_next (
+      uuid, list_id, user_id, updated_by_id, action, role, created_at, deleted_at
+    )
+    select ml.id, l.id, u.id, actor.id, ml.action, ml.role, ml.created_at, ml.deleted_at
+    from public.list_members_log ml
+    join public.lists_next l on l.uuid = ml.list_id
+    join public.users_next u on u.uuid = ml.user_id
+    left join public.users_next actor on actor.uuid = ml.updated_by_id
+  $sql$;
 
-create unique index if not exists list_invites_token_active_idx
-  on public.list_invites (token)
-  where deleted_at is null;
-create unique index if not exists list_invites_list_email_idx
-  on public.list_invites (list_id, lower(email))
-  where deleted_at is null;
-create index if not exists list_invites_email_idx on public.list_invites (lower(email));
+  execute $sql$
+    create table public.list_invites_log_next (
+      id bigint generated always as identity primary key,
+      uuid uuid not null unique,
+      list_invite_id bigint not null,
+      updated_by_id bigint references public.users_next (id) on delete set null,
+      action text not null,
+      list_id bigint not null,
+      email text not null,
+      token text not null,
+      invited_by_id bigint not null,
+      status text not null,
+      expires_at timestamptz not null,
+      created_at timestamptz,
+      deleted_at timestamptz
+    )
+  $sql$;
+  execute $sql$
+    insert into public.list_invites_log_next (
+      uuid, list_invite_id, updated_by_id, action, list_id, email, token, invited_by_id,
+      status, expires_at, created_at, deleted_at
+    )
+    select il.id, invite.id, actor.id, il.action, l.id, il.email, il.token, owner.id,
+      il.status, il.expires_at, il.created_at, il.deleted_at
+    from public.list_invites_log il
+    join public.list_invites_next invite on invite.uuid = il.list_invite_id
+    join public.lists_next l on l.uuid = il.list_id
+    join public.users_next owner on owner.uuid = il.invited_by_id
+    left join public.users_next actor on actor.uuid = il.updated_by_id
+  $sql$;
 
--- ---------------------------------------------------------------------------
--- Sessions. Refresh tokens are stored as SHA-256 hashes.
--- ---------------------------------------------------------------------------
-create table if not exists public.sessions (
-  id bigint generated always as identity primary key,
-  uuid uuid not null unique default gen_random_uuid(),
-  user_id bigint not null references public.users (id) on delete cascade,
-  token_hash text not null,
-  expires_at timestamptz not null,
-  created_at timestamptz not null default now(),
-  revoked_at timestamptz
-);
+  execute 'drop table if exists public.list_invites_log cascade';
+  execute 'drop table if exists public.list_members_log cascade';
+  execute 'drop table if exists public.items_log cascade';
+  execute 'drop table if exists public.lists_log cascade';
+  execute 'drop table if exists public.grocery_types_log cascade';
+  execute 'drop table if exists public.profiles_log cascade';
+  execute 'drop table if exists public.sessions cascade';
+  execute 'drop table if exists public.list_invites cascade';
+  execute 'drop table if exists public.list_members cascade';
+  execute 'drop table if exists public.items cascade';
+  execute 'drop table if exists public.lists cascade';
+  execute 'drop table if exists public.grocery_types cascade';
+  execute 'drop table if exists public.profiles cascade';
 
-create unique index if not exists sessions_token_hash_active_idx
-  on public.sessions (token_hash)
-  where revoked_at is null;
+  execute 'alter table public.users_next rename to users';
+  execute 'alter table public.profiles_next rename to profiles';
+  execute 'alter table public.lists_next rename to lists';
+  execute 'alter table public.grocery_types_next rename to grocery_types';
+  execute 'alter table public.items_next rename to items';
+  execute 'alter table public.list_members_next rename to list_members';
+  execute 'alter table public.list_invites_next rename to list_invites';
+  execute 'alter table public.sessions_next rename to sessions';
+  execute 'alter table public.users_log_next rename to users_log';
+  execute 'alter table public.profiles_log_next rename to profiles_log';
+  execute 'alter table public.lists_log_next rename to lists_log';
+  execute 'alter table public.grocery_types_log_next rename to grocery_types_log';
+  execute 'alter table public.items_log_next rename to items_log';
+  execute 'alter table public.list_members_log_next rename to list_members_log';
+  execute 'alter table public.list_invites_log_next rename to list_invites_log';
 
+  execute 'create unique index if not exists users_email_active_idx on public.users (lower(email)) where deleted_at is null';
+  execute 'create index if not exists lists_created_by_id_idx on public.lists (created_by_id)';
+  execute 'create unique index if not exists lists_share_token_active_idx on public.lists (share_token) where deleted_at is null';
+  execute 'create unique index if not exists grocery_types_code_active_idx on public.grocery_types (code) where deleted_at is null';
+  execute 'create index if not exists items_list_id_idx on public.items (list_id)';
+  execute 'create index if not exists items_grocery_type_id_idx on public.items (grocery_type_id)';
+  execute 'create unique index if not exists list_members_list_user_active_idx on public.list_members (list_id, user_id) where deleted_at is null';
+  execute 'create index if not exists list_members_user_id_idx on public.list_members (user_id)';
+  execute 'create unique index if not exists list_invites_token_active_idx on public.list_invites (token) where deleted_at is null';
+  execute 'create unique index if not exists list_invites_list_email_idx on public.list_invites (list_id, lower(email)) where deleted_at is null';
+  execute 'create index if not exists list_invites_email_idx on public.list_invites (lower(email))';
+  execute 'create unique index if not exists sessions_token_hash_active_idx on public.sessions (token_hash) where revoked_at is null';
+
+  execute 'alter table public.users enable row level security';
+  execute 'alter table public.profiles enable row level security';
+  execute 'alter table public.lists enable row level security';
+  execute 'alter table public.grocery_types enable row level security';
+  execute 'alter table public.items enable row level security';
+  execute 'alter table public.list_members enable row level security';
+  execute 'alter table public.list_invites enable row level security';
+  execute 'alter table public.sessions enable row level security';
+  execute 'alter table public.users_log enable row level security';
+  execute 'alter table public.profiles_log enable row level security';
+  execute 'alter table public.lists_log enable row level security';
+  execute 'alter table public.grocery_types_log enable row level security';
+  execute 'alter table public.items_log enable row level security';
+  execute 'alter table public.list_members_log enable row level security';
+  execute 'alter table public.list_invites_log enable row level security';
+end;
+$fn$;
+
+select public._baiol_migrate_users_and_ids();
+drop function public._baiol_migrate_users_and_ids();
 -- ---------------------------------------------------------------------------
 -- updated_at helper
 -- ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@ import { Test } from '@nestjs/testing';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { NotFoundException } from '@nestjs/common';
 import { ListsService } from './lists.service';
-import { ProfileRepository } from '../persistence/profile.repository';
+import { UserRepository } from '../persistence/user.repository';
 import { ListRepository } from '../persistence/list.repository';
 import { ItemRepository } from '../persistence/item.repository';
 import { MemberRepository } from '../persistence/member.repository';
@@ -44,7 +44,7 @@ const itemRow = {
 };
 
 describe('ListsService', () => {
-  const profiles = {
+  const users = {
     findById: jest.fn(),
     findByIds: jest.fn(),
     findActiveByEmail: jest.fn(),
@@ -87,7 +87,7 @@ describe('ListsService', () => {
       providers: [
         ListsService,
         { provide: EventEmitter2, useValue: { emit: jest.fn() } },
-        { provide: ProfileRepository, useValue: profiles },
+        { provide: UserRepository, useValue: users },
         { provide: ListRepository, useValue: listStore },
         { provide: ItemRepository, useValue: itemStore },
         { provide: MemberRepository, useValue: memberStore },
@@ -105,8 +105,8 @@ describe('ListsService', () => {
   });
 
   it('creates a list and an owner membership with log sentences', async () => {
-    profiles.findById.mockResolvedValue(profile);
-    profiles.findByIds.mockResolvedValue([profile]);
+    users.findById.mockResolvedValue(profile);
+    users.findByIds.mockResolvedValue([profile]);
     memberStore.listActive.mockResolvedValue([
       { list_id: 'list-1', user_id: user.id, role: 'owner', created_at: profile.created_at },
     ]);
@@ -146,7 +146,7 @@ describe('ListsService', () => {
       role: 'owner',
       created_at: profile.created_at,
     });
-    profiles.findById.mockResolvedValue(profile);
+    users.findById.mockResolvedValue(profile);
     itemStore.listActive.mockResolvedValue([]);
     listStore.update.mockResolvedValue({ ...listRow, name: 'November' });
 
@@ -170,7 +170,7 @@ describe('ListsService', () => {
       role: 'owner',
       created_at: profile.created_at,
     });
-    profiles.findById.mockResolvedValue(profile);
+    users.findById.mockResolvedValue(profile);
     listStore.softDelete.mockResolvedValue(undefined);
 
     await service.remove('list-1', user.id);
@@ -191,7 +191,7 @@ describe('ListsService', () => {
       role: 'editor',
       created_at: profile.created_at,
     });
-    profiles.findById.mockResolvedValue(profile);
+    users.findById.mockResolvedValue(profile);
     itemStore.insert.mockImplementation(async (input: { id: string }) => ({
       ...itemRow,
       id: input.id,
@@ -248,7 +248,7 @@ describe('ListsService', () => {
       role: 'owner',
       created_at: profile.created_at,
     });
-    profiles.findById.mockResolvedValue(profile);
+    users.findById.mockResolvedValue(profile);
     itemStore.listActive.mockResolvedValue([]);
 
     await service.update('list-1', user.id, { name: 'October' });
@@ -256,18 +256,18 @@ describe('ListsService', () => {
     expect(listStore.update).not.toHaveBeenCalled();
   });
 
-  it('loads an existing profile and does not create one', async () => {
-    profiles.findById.mockResolvedValue(profile);
+  it('loads an existing user and does not create one', async () => {
+    users.findById.mockResolvedValue(profile);
 
     await expect(service.ensureProfile(user)).resolves.toEqual(profile);
-    expect(profiles.insert).not.toHaveBeenCalled();
+    expect(users.insert).not.toHaveBeenCalled();
   });
 
-  it('rejects sign-in when the profile row is missing', async () => {
-    profiles.findById.mockResolvedValue(null);
+  it('rejects sign-in when the user row is missing', async () => {
+    users.findById.mockResolvedValue(null);
 
     await expect(service.ensureProfile(user)).rejects.toBeInstanceOf(NotFoundException);
-    expect(profiles.insert).not.toHaveBeenCalled();
+    expect(users.insert).not.toHaveBeenCalled();
   });
 
   it('records a guest item edit as unknown', async () => {

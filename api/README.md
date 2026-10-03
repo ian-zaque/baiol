@@ -5,7 +5,7 @@ NestJS API in front of Postgres. The mobile app talks to this API for accounts, 
 ## Setup
 
 1. Create a Supabase project.
-2. Run [`../supabase/schema.sql`](../supabase/schema.sql) in the SQL editor. On a database created from an older copy, also run [`../supabase/2026_10_03_000008_api_auth.sql`](../supabase/2026_10_03_000008_api_auth.sql).
+2. Run [`../supabase/schema.sql`](../supabase/schema.sql) in the SQL editor. On a database created from an older copy, also run any migration you have not applied yet, through [`../supabase/2026_10_03_000009_users_and_ids.sql`](../supabase/2026_10_03_000009_users_and_ids.sql).
 3. Copy `.env.example` to `.env` and fill every required variable. The process exits when one is missing.
 
 ```bash

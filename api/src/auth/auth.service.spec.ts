@@ -3,7 +3,7 @@ import { Test } from '@nestjs/testing';
 import { AuthService } from './auth.service';
 import { hashPassword } from './password';
 import { TokenService } from './token.service';
-import { ProfileRepository } from '../persistence/profile.repository';
+import { UserRepository } from '../persistence/user.repository';
 import { SessionRepository } from '../persistence/session.repository';
 
 const profile = {
@@ -15,12 +15,11 @@ const profile = {
 };
 
 describe('AuthService', () => {
-  const profiles = {
+  const users = {
     findById: jest.fn(),
     findByIds: jest.fn(),
     findActiveByEmail: jest.fn(),
     insert: jest.fn(),
-    updateDisplayName: jest.fn(),
   };
   const sessions = {
     insert: jest.fn(),
@@ -40,13 +39,13 @@ describe('AuthService', () => {
     tokens.sign.mockResolvedValue('access-token');
     sessions.insert.mockResolvedValue({
       id: 'session-1',
-      profile_id: profile.id,
+      user_id: profile.id,
       expires_at: '2026-02-01T00:00:00.000Z',
     });
     const moduleRef = await Test.createTestingModule({
       providers: [
         AuthService,
-        { provide: ProfileRepository, useValue: profiles },
+        { provide: UserRepository, useValue: users },
         { provide: SessionRepository, useValue: sessions },
         { provide: TokenService, useValue: tokens },
       ],
@@ -55,8 +54,8 @@ describe('AuthService', () => {
   });
 
   it('registers a new account and returns a session', async () => {
-    profiles.findActiveByEmail.mockResolvedValue(null);
-    profiles.insert.mockImplementation(async (input: { id: string; email: string; displayName: string }) => ({
+    users.findActiveByEmail.mockResolvedValue(null);
+    users.insert.mockImplementation(async (input: { id: string; email: string; displayName: string }) => ({
       id: input.id,
       email: input.email,
       display_name: input.displayName,
@@ -69,13 +68,25 @@ describe('AuthService', () => {
       displayName: 'Ada',
     });
 
-    expect(profiles.insert).toHaveBeenCalledWith(
+    expect(users.insert).toHaveBeenCalledTimes(1);
+    expect(users.insert).toHaveBeenCalledWith(
       expect.objectContaining({
         email: 'ada@example.com',
         displayName: 'Ada',
+        userAction: expect.stringMatching(/created the user/),
+        profileAction: expect.stringMatching(/created the profile/),
       }),
     );
-    const stored = profiles.insert.mock.calls[0][0] as { passwordHash: string };
+    const stored = users.insert.mock.calls[0][0] as {
+      id: string;
+      profileId: string;
+      passwordHash: string;
+      userAction: string;
+      profileAction: string;
+    };
+    expect(stored.id).not.toBe(stored.profileId);
+    expect(stored.userAction).toContain(stored.id);
+    expect(stored.profileAction).toContain(stored.profileId);
     expect(stored.passwordHash).not.toContain('secret1');
     expect(result.access_token).toBe('access-token');
     expect(result.refresh_token).toEqual(expect.any(String));
@@ -84,16 +95,16 @@ describe('AuthService', () => {
   });
 
   it('rejects a duplicate email', async () => {
-    profiles.findActiveByEmail.mockResolvedValue(profile);
+    users.findActiveByEmail.mockResolvedValue(profile);
 
     await expect(
       service.register({ email: 'ada@example.com', password: 'secret1', displayName: 'Ada' }),
     ).rejects.toBeInstanceOf(ConflictException);
-    expect(profiles.insert).not.toHaveBeenCalled();
+    expect(users.insert).not.toHaveBeenCalled();
   });
 
   it('logs in with a matching password', async () => {
-    profiles.findActiveByEmail.mockResolvedValue({
+    users.findActiveByEmail.mockResolvedValue({
       ...profile,
       password_hash: await hashPassword('secret1'),
     });
@@ -105,7 +116,7 @@ describe('AuthService', () => {
   });
 
   it('rejects a wrong password', async () => {
-    profiles.findActiveByEmail.mockResolvedValue({
+    users.findActiveByEmail.mockResolvedValue({
       ...profile,
       password_hash: await hashPassword('secret1'),
     });
@@ -118,10 +129,10 @@ describe('AuthService', () => {
   it('rotates the refresh token', async () => {
     sessions.findActiveByTokenHash.mockResolvedValue({
       id: 'session-1',
-      profile_id: profile.id,
+      user_id: profile.id,
       expires_at: '2099-01-01T00:00:00.000Z',
     });
-    profiles.findById.mockResolvedValue(profile);
+    users.findById.mockResolvedValue(profile);
     sessions.revoke.mockResolvedValue(undefined);
 
     const result = await service.refresh('old-refresh');
@@ -134,7 +145,7 @@ describe('AuthService', () => {
   it('revokes a session on logout', async () => {
     sessions.findActiveByTokenHash.mockResolvedValue({
       id: 'session-1',
-      profile_id: profile.id,
+      user_id: profile.id,
       expires_at: '2099-01-01T00:00:00.000Z',
     });
     sessions.revoke.mockResolvedValue(undefined);
