@@ -16,8 +16,12 @@ describe('Health (e2e)', () => {
     await app.init();
   });
 
+  it('/ (GET)', () => {
+    return request(app.getHttpServer()).get('/').expect(200).expect({ ok: true, service: 'baiol-api' });
+  });
+
   it('/health (GET)', () => {
-    return request(app.getHttpServer()).get('/health').expect(200);
+    return request(app.getHttpServer()).get('/health').expect(200).expect({ ok: true });
   });
 
   afterEach(async () => {
