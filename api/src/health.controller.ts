@@ -4,7 +4,7 @@ import { Controller, Get } from '@nestjs/common';
 export class HealthController {
   @Get()
   root() {
-    return { ok: true, service: 'baiol-api' };
+    return 'Hello World!';
   }
 
   @Get('health')

@@ -16,7 +16,7 @@ npm install
 npm run start:dev
 ```
 
-`GET http://localhost:3000/` returns `{ ok: true, service: "baiol-api" }` when the process is up. `GET http://localhost:3000/health` returns `{ ok: true }`.
+`GET http://localhost:3000/` returns `Hello World!` when the process is up. `GET http://localhost:3000/health` returns `{ ok: true }`.
 
 ## Auth
 
