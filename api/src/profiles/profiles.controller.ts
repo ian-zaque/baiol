@@ -1,12 +1,12 @@
 import { Body, Controller, Get, Patch, Post, UseGuards } from '@nestjs/common';
 import type { AuthUser } from '../common/auth-user';
 import { CurrentUser } from '../common/current-user.decorator';
-import { SupabaseAuthGuard } from '../common/supabase-auth.guard';
+import { AuthGuard } from '../auth/auth.guard';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ProfilesService } from './profiles.service';
 
 @Controller('me')
-@UseGuards(SupabaseAuthGuard)
+@UseGuards(AuthGuard)
 export class ProfilesController {
   constructor(private readonly profiles: ProfilesService) {}
 

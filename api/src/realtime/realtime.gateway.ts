@@ -12,8 +12,8 @@ import {
 import { Server, Socket } from 'socket.io';
 import { extractBearerToken } from '../common/extract-bearer';
 import { displayNameOf } from '../common/types';
+import { TokenService } from '../auth/token.service';
 import { ListsService } from '../lists/lists.service';
-import { SupabaseService } from '../supabase/supabase.service';
 import { dinosaurNickname } from './dinosaur-names';
 import { type ListRealtimeEvent, REALTIME_EVENTS } from './realtime.events';
 
@@ -40,7 +40,7 @@ export class RealtimeGateway
   server!: Server;
 
   constructor(
-    private readonly supabase: SupabaseService,
+    private readonly tokens: TokenService,
     private readonly lists: ListsService,
   ) {}
 
@@ -65,7 +65,7 @@ export class RealtimeGateway
       );
 
       if (jwt) {
-        const user = await this.supabase.getUserFromToken(jwt);
+        const user = await this.tokens.verify(jwt);
         const profile = await this.lists.ensureProfile(user);
         client.data.user = {
           id: user.id,

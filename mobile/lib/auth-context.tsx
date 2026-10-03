@@ -1,4 +1,3 @@
-import { Session } from '@supabase/supabase-js';
 import {
   ReactNode,
   createContext,
@@ -8,13 +7,13 @@ import {
   useMemo,
   useState,
 } from 'react';
-import { api } from './api';
-import { supabase } from './supabase';
+import { api, sessionFromAuth } from './api';
+import { AppSession, clearSession, loadSession, saveSession } from './session';
 import { Profile } from './types';
 
 type AuthContextValue = {
   loading: boolean;
-  session: Session | null;
+  session: AppSession | null;
   profile: Profile | null;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, displayName: string) => Promise<void>;
@@ -26,74 +25,77 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSession] = useState<AppSession | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
-
-  const syncSession = useCallback(async (next: Session | null) => {
-    setSession(next);
-    if (!next) {
-      setProfile(null);
-      return;
-    }
-    const result = await api.sync();
-    setProfile(result.profile);
-  }, []);
 
   useEffect(() => {
     let mounted = true;
-    supabase.auth
-      .getSession()
-      .then(async ({ data }) => {
+    loadSession()
+      .then(async (stored) => {
         if (!mounted) return;
+        if (!stored) {
+          setSession(null);
+          setProfile(null);
+          return;
+        }
+        setSession(stored);
         try {
-          await syncSession(data.session);
-        } finally {
-          if (mounted) setLoading(false);
+          const result = await api.sync();
+          if (!mounted) return;
+          setProfile(result.profile);
+          const latest = await loadSession();
+          if (latest) setSession(latest);
+        } catch {
+          const latest = await loadSession();
+          if (!latest && mounted) {
+            setSession(null);
+            setProfile(null);
+          }
         }
       })
       .catch(() => {
+        if (!mounted) return;
+        setSession(null);
+        setProfile(null);
+      })
+      .finally(() => {
         if (mounted) setLoading(false);
       });
 
-    const { data: subscription } = supabase.auth.onAuthStateChange(
-      (event, nextSession) => {
-        if (event === 'TOKEN_REFRESHED') {
-          setSession(nextSession);
-          return;
-        }
-        void syncSession(nextSession);
-      },
-    );
-
     return () => {
       mounted = false;
-      subscription.subscription.unsubscribe();
     };
-  }, [syncSession]);
-
-  const signIn = useCallback(async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      throw error;
-    }
   }, []);
+
+  const adopt = useCallback(async (result: Awaited<ReturnType<typeof api.login>>) => {
+    const next = sessionFromAuth(result);
+    await saveSession(next);
+    setSession(next);
+    setProfile(result.profile);
+  }, []);
+
+  const signIn = useCallback(
+    async (email: string, password: string) => {
+      await adopt(await api.login(email, password));
+    },
+    [adopt],
+  );
 
   const signUp = useCallback(
     async (email: string, password: string, displayName: string) => {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: { data: { display_name: displayName } },
-      });
-      if (error) {
-        throw error;
-      }
+      await adopt(await api.register(email, password, displayName));
     },
-    [],
+    [adopt],
   );
 
   const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
+    try {
+      await api.logout();
+    } catch {
+      // The local session still goes away if the server is unreachable.
+    }
+    await clearSession();
+    setSession(null);
     setProfile(null);
   }, []);
 

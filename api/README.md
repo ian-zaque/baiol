@@ -1,15 +1,12 @@
 # Baiol API
 
-NestJS API in front of Supabase. The mobile app talks to this API for lists, items, share links, and live updates.
+NestJS API in front of Postgres. The mobile app talks to this API for accounts, lists, items, share links, and live updates. Supabase is the database adapter.
 
 ## Setup
 
 1. Create a Supabase project.
-2. Run [`../supabase/schema.sql`](../supabase/schema.sql) in the SQL editor.
-3. In Authentication settings, enable email/password. For local testing you can disable **Confirm email**.
-4. Copy `.env.example` to `.env` and fill:
-   - `SUPABASE_URL`
-   - `SUPABASE_SERVICE_ROLE_KEY` (Project Settings → API)
+2. Run [`../supabase/schema.sql`](../supabase/schema.sql) in the SQL editor. On a database created from an older copy, also run [`../supabase/2026_10_03_000008_api_auth.sql`](../supabase/2026_10_03_000008_api_auth.sql).
+3. Copy `.env.example` to `.env` and fill every required variable. The process exits when one is missing.
 
 ```bash
 npm install
@@ -20,22 +17,25 @@ npm run start:dev
 
 ## Auth
 
-Send `Authorization: Bearer <supabase access token>` on REST and Socket.io (`auth.token`) for owned lists.
+`POST /auth/register`, `POST /auth/login`, and `POST /auth/refresh` return `access_token` and `refresh_token`. Send `Authorization: Bearer <access token>` on REST and Socket.io (`auth.token`) for owned lists. `POST /auth/logout` revokes the refresh token.
 
 Share-link guests use `GET /shared/:token` (no JWT) and Socket.io `auth.shareToken` + `auth.guestId`.
 
 ## Main routes
 
-- `POST /me/sync` — upsert profile
+- `POST /auth/register`
+- `POST /auth/login`
+- `POST /auth/refresh`
+- `POST /auth/logout`
+- `POST /me/sync` — load the signed-in profile
 - `GET|PATCH /me`
 - `GET|POST /lists`
 - `GET|PATCH|DELETE /lists/:id` (delete is owner-only, soft delete)
 - `GET /lists/:id/share` — copyable app + web links
 - `POST /lists/:id/share/rotate` — owner-only, invalidates the old link
 - `POST|PATCH|DELETE /lists/:id/items/:itemId`
+- `GET /grocery-types`
 - `GET /lists/:id/members`
 - `GET /shared/:token` — public list JSON (HTML if the client asks for it)
 - `PATCH /shared/:token`
 - `POST|PATCH|DELETE /shared/:token/items/:itemId`
-
-Socket.io: `join_list` / `leave_list`, events `presence`, `item.created`, `item.updated`, `item.deleted`, `list.updated`, `members.changed`.

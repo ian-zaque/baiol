@@ -1,16 +1,17 @@
 -- Baiol grocery lists schema
 -- Run this in the Supabase SQL editor after creating a project.
--- Auth remains in auth.users; this file adds app tables, a profile trigger, and RLS.
+-- Accounts live in public.profiles. This file adds app tables and RLS.
 
 create extension if not exists "pgcrypto";
 
 -- ---------------------------------------------------------------------------
--- Profiles (1:1 with auth.users)
+-- Profiles. The API owns credentials; id is not tied to auth.users.
 -- ---------------------------------------------------------------------------
 create table if not exists public.profiles (
-  id uuid primary key references auth.users (id) on delete cascade,
+  id uuid primary key,
   email text not null,
   display_name text,
+  password_hash text not null,
   created_at timestamptz not null default now(),
   deleted_at timestamptz
 );
@@ -156,6 +157,22 @@ create unique index if not exists list_invites_list_email_idx
 create index if not exists list_invites_email_idx on public.list_invites (lower(email));
 
 -- ---------------------------------------------------------------------------
+-- Sessions. Refresh tokens are stored as SHA-256 hashes.
+-- ---------------------------------------------------------------------------
+create table if not exists public.sessions (
+  id uuid primary key default gen_random_uuid(),
+  profile_id uuid not null references public.profiles (id) on delete cascade,
+  token_hash text not null,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  revoked_at timestamptz
+);
+
+create unique index if not exists sessions_token_hash_active_idx
+  on public.sessions (token_hash)
+  where revoked_at is null;
+
+-- ---------------------------------------------------------------------------
 -- updated_at helper
 -- ---------------------------------------------------------------------------
 create or replace function public.set_updated_at()
@@ -195,33 +212,6 @@ drop trigger if exists items_touch_list on public.items;
 create trigger items_touch_list
 after insert or update or delete on public.items
 for each row execute function public.touch_list_from_item();
-
--- ---------------------------------------------------------------------------
--- Auto-create a profile when a user registers
--- ---------------------------------------------------------------------------
-create or replace function public.handle_new_user()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  insert into public.profiles (id, email, display_name)
-  values (
-    new.id,
-    new.email,
-    coalesce(new.raw_user_meta_data ->> 'display_name', split_part(new.email, '@', 1))
-  )
-  on conflict (id) do update
-    set email = excluded.email;
-  return new;
-end;
-$$;
-
-drop trigger if exists on_auth_user_created on auth.users;
-create trigger on_auth_user_created
-after insert on auth.users
-for each row execute function public.handle_new_user();
 
 -- ---------------------------------------------------------------------------
 -- Append-only logs. The API writes these from the service that performs
@@ -363,6 +353,7 @@ alter table public.grocery_types_log enable row level security;
 alter table public.items_log enable row level security;
 alter table public.list_members_log enable row level security;
 alter table public.list_invites_log enable row level security;
+alter table public.sessions enable row level security;
 
 drop policy if exists "service_role_all_profiles" on public.profiles;
 drop policy if exists "service_role_all_lists" on public.lists;
@@ -381,7 +372,8 @@ create or replace function public.apply_profile_insert(
   p_action text,
   p_id uuid,
   p_email text,
-  p_display_name text
+  p_display_name text,
+  p_password_hash text
 ) returns jsonb
 language plpgsql
 security definer
@@ -390,8 +382,8 @@ as $$
 declare
   rec public.profiles;
 begin
-  insert into public.profiles (id, email, display_name)
-  values (p_id, p_email, p_display_name)
+  insert into public.profiles (id, email, display_name, password_hash)
+  values (p_id, p_email, p_display_name, p_password_hash)
   returning * into rec;
 
   insert into public.profiles_log (
@@ -400,7 +392,7 @@ begin
     rec.id, p_actor_id, p_action, rec.email, rec.display_name, rec.created_at, rec.deleted_at
   );
 
-  return to_jsonb(rec);
+  return to_jsonb(rec) - 'password_hash';
 end;
 $$;
 
@@ -434,16 +426,16 @@ begin
     rec.id, p_actor_id, p_action, rec.email, rec.display_name, rec.created_at, rec.deleted_at
   );
 
-  return to_jsonb(rec);
+  return to_jsonb(rec) - 'password_hash';
 end;
 $$;
 
-revoke all on function public.apply_profile_insert(uuid, text, uuid, text, text) from public;
+revoke all on function public.apply_profile_insert(uuid, text, uuid, text, text, text) from public;
 revoke all on function public.apply_profile_update(uuid, text, uuid, jsonb) from public;
 do $$
 begin
   if exists (select 1 from pg_roles where rolname = 'service_role') then
-    grant execute on function public.apply_profile_insert(uuid, text, uuid, text, text) to service_role;
+    grant execute on function public.apply_profile_insert(uuid, text, uuid, text, text, text) to service_role;
     grant execute on function public.apply_profile_update(uuid, text, uuid, jsonb) to service_role;
   end if;
 end $$;

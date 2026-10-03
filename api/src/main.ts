@@ -1,4 +1,5 @@
 import { ValidationPipe } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 
@@ -12,7 +13,10 @@ async function bootstrap() {
       transformOptions: { enableImplicitConversion: true },
     }),
   );
-  const port = Number(process.env.PORT ?? 3000);
+  const port = Number(app.get(ConfigService).getOrThrow<string>('PORT'));
+  if (!Number.isInteger(port) || port <= 0) {
+    throw new Error('PORT must be a positive integer');
+  }
   await app.listen(port);
 }
 

@@ -17,10 +17,6 @@ export default function RegisterScreen() {
     try {
       setLoading(true);
       await signUp(email.trim(), password, displayName.trim());
-      Alert.alert(
-        'Account created',
-        'If your project requires email confirmation, check your inbox before logging in.',
-      );
     } catch (error) {
       Alert.alert('Could not register', (error as Error).message);
     } finally {

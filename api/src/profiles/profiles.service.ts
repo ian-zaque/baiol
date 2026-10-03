@@ -1,15 +1,16 @@
-import { Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { auditUpdate } from '../common/audit';
 import { AuthUser } from '../common/auth-user';
+import { fromPersistence } from '../common/map-persistence-error';
 import { ProfileRow, displayNameOf } from '../common/types';
 import { ListsService } from '../lists/lists.service';
-import { SupabaseService } from '../supabase/supabase.service';
+import { ProfileRepository } from '../persistence/profile.repository';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
 export class ProfilesService {
   constructor(
-    private readonly supabase: SupabaseService,
+    private readonly profiles: ProfileRepository,
     private readonly lists: ListsService,
   ) {}
 
@@ -33,23 +34,17 @@ export class ProfilesService {
     }
 
     const actor = { id: user.id, name: displayNameOf(current) };
-    const { data, error } = await this.supabase.client.rpc('apply_profile_update', {
-      p_actor_id: actor.id,
-      p_action: auditUpdate(actor, 'profile', user.id, [
-        { field: 'display_name', from: current.display_name, to: displayName },
-      ]),
-      p_id: user.id,
-      p_patch: { display_name: displayName },
-    });
-
-    if (error || data == null) {
-      const message = error?.message ?? 'Could not update profile';
-      if (message.toLowerCase().includes('not found')) {
-        throw new NotFoundException(message);
-      }
-      throw new InternalServerErrorException(message);
-    }
-    return this.toPublic(data as ProfileRow);
+    const updated = await fromPersistence(
+      this.profiles.updateDisplayName({
+        actorId: actor.id,
+        action: auditUpdate(actor, 'profile', user.id, [
+          { field: 'display_name', from: current.display_name, to: displayName },
+        ]),
+        id: user.id,
+        displayName,
+      }),
+    );
+    return this.toPublic(updated);
   }
 
   private toPublic(profile: ProfileRow) {

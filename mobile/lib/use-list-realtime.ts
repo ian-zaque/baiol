@@ -22,7 +22,7 @@ export function useListRealtime(options: {
       return;
     }
 
-    if (!shareToken && !session?.access_token) {
+    if (!shareToken && !session?.accessToken) {
       setPresence([]);
       return;
     }
@@ -106,11 +106,9 @@ export function useListRealtime(options: {
     void (async () => {
       const auth = shareToken
         ? { shareToken, ...(await getGuestIdentity()) }
-        : { token: session?.access_token };
+        : { token: session?.accessToken };
       if (cancelled) return;
-      setSelfId(
-        'guestId' in auth ? auth.guestId : (session?.user.id ?? null),
-      );
+      setSelfId('guestId' in auth ? auth.guestId : (session?.userId ?? null));
       socket = connectRealtime(auth);
       if (cancelled) {
         socket.disconnect();
@@ -128,7 +126,7 @@ export function useListRealtime(options: {
         socket.disconnect();
       }
     };
-  }, [listId, queryClient, session?.access_token, shareToken]);
+  }, [listId, queryClient, session?.accessToken, session?.userId, shareToken]);
 
   return { presence, selfId };
 }

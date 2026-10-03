@@ -13,11 +13,9 @@ export class MailService {
   constructor(config: ConfigService) {
     const apiKey = config.get<string>('RESEND_API_KEY');
     this.resend = apiKey ? new Resend(apiKey) : null;
-    this.from =
-      config.get<string>('MAIL_FROM') ?? 'Baiol <invites@example.com>';
-    this.scheme = config.get<string>('APP_SCHEME') ?? 'baiol';
-    this.apiPublicUrl =
-      config.get<string>('API_PUBLIC_URL') ?? 'http://localhost:3000';
+    this.from = apiKey ? config.getOrThrow<string>('MAIL_FROM') : '';
+    this.scheme = config.getOrThrow<string>('APP_SCHEME');
+    this.apiPublicUrl = config.getOrThrow<string>('API_PUBLIC_URL').replace(/\/$/, '');
   }
 
   async sendListInvite(params: {

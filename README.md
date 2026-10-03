@@ -6,9 +6,9 @@ The repo has three parts:
 
 - `mobile` — Expo app (iOS, Android, and web)
 - `api` — NestJS API for lists, items, share links, and live updates
-- `supabase` — SQL for the database (auth, lists, items, grocery types)
+- `supabase` — SQL for Postgres (profiles, sessions, lists, items, grocery types)
 
-Accounts live in Supabase Auth. The API uses the Supabase service role and is the only thing that reads and writes app data.
+Accounts are created and checked by the API. Postgres stores the data. The API reaches Postgres through a Supabase adapter and the service role key.
 
 ## Requirements
 
@@ -32,8 +32,8 @@ Accounts live in Supabase Auth. The API uses the Supabase service role and is th
    - [`supabase/2026_10_03_000005_items_log.sql`](supabase/2026_10_03_000005_items_log.sql)
    - [`supabase/2026_10_03_000006_list_members_log.sql`](supabase/2026_10_03_000006_list_members_log.sql)
    - [`supabase/2026_10_03_000007_list_invites_log.sql`](supabase/2026_10_03_000007_list_invites_log.sql)
-4. In Supabase, under Authentication, enable email and password. For local testing, turn off **Confirm email** so a new account can sign in immediately.
-5. Copy the env examples and fill them in:
+   - [`supabase/2026_10_03_000008_api_auth.sql`](supabase/2026_10_03_000008_api_auth.sql)
+4. Copy the env examples and fill them in:
 
 ```bash
 cp api/.env.example api/.env
@@ -42,20 +42,24 @@ cp mobile/.env.example mobile/.env
 
 In `api/.env`:
 
+- `PORT` — API listen port
 - `SUPABASE_URL` — Project Settings → API → Project URL
 - `SUPABASE_SERVICE_ROLE_KEY` — Project Settings → API → `service_role` secret
-- `API_PUBLIC_URL` — public address of this API (local default `http://localhost:3000`)
-- `WEB_APP_URL` — Expo web origin (local default `http://localhost:8081`)
+- `APP_SCHEME` — app URL scheme, matching `scheme` in `mobile/app.json`
+- `API_PUBLIC_URL` — public address of this API
+- `WEB_APP_URL` — Expo web origin
+- `AUTH_JWT_SECRET` — long random string used to sign access tokens
+- `AUTH_ACCESS_TTL_SECONDS` — access token lifetime in seconds
+- `AUTH_REFRESH_TTL_SECONDS` — refresh token lifetime in seconds
+- `RESEND_API_KEY` and `MAIL_FROM` — optional; `MAIL_FROM` is required when the API key is set
 
 In `mobile/.env`:
 
-- `EXPO_PUBLIC_SUPABASE_URL` — same project URL
-- `EXPO_PUBLIC_SUPABASE_ANON_KEY` — Project Settings → API → `anon` public key
 - `EXPO_PUBLIC_API_URL` — API address the phone or browser can reach
 
 On a physical phone, `EXPO_PUBLIC_API_URL` must be your computer’s LAN address, for example `http://192.168.0.10:3000`, not `localhost`. The Android emulator uses `http://10.0.2.2:3000`.
 
-6. Install dependencies in both apps:
+5. Install dependencies in both apps:
 
 ```bash
 npm install --prefix api

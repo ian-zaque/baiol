@@ -13,8 +13,9 @@ describe('API address', () => {
     );
   });
 
-  it('falls back to the local API', () => {
-    expect(resolveApiUrl(undefined)).toBe('http://localhost:3000');
+  it('trims a full URL and requires a value', () => {
     expect(resolveApiUrl('  http://10.0.2.2:3000  ')).toBe('http://10.0.2.2:3000');
+    expect(() => resolveApiUrl(undefined)).toThrow('EXPO_PUBLIC_API_URL is required');
+    expect(() => resolveApiUrl('   ')).toThrow('EXPO_PUBLIC_API_URL is required');
   });
 });

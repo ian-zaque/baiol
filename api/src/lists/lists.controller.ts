@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import type { AuthUser } from '../common/auth-user';
 import { CurrentUser } from '../common/current-user.decorator';
-import { SupabaseAuthGuard } from '../common/supabase-auth.guard';
+import { AuthGuard } from '../auth/auth.guard';
 import {
   CreateItemDto,
   CreateListDto,
@@ -20,7 +20,7 @@ import {
 import { ListsService } from './lists.service';
 
 @Controller('lists')
-@UseGuards(SupabaseAuthGuard)
+@UseGuards(AuthGuard)
 export class ListsController {
   constructor(private readonly lists: ListsService) {}
 

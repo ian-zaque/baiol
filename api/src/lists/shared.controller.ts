@@ -34,10 +34,8 @@ export class SharedController {
     const list = await this.lists.getByShareToken(token);
     const accept = req.headers.accept ?? '';
     if (accept.includes('text/html')) {
-      const scheme = this.config.get<string>('APP_SCHEME') ?? 'baiol';
-      const webAppUrl = (
-        this.config.get<string>('WEB_APP_URL') ?? 'http://localhost:8081'
-      ).replace(/\/$/, '');
+      const scheme = this.config.getOrThrow<string>('APP_SCHEME');
+      const webAppUrl = this.config.getOrThrow<string>('WEB_APP_URL').replace(/\/$/, '');
       const webJoin = `${webAppUrl}/join/${encodeURIComponent(token)}`;
       const appLink = `${scheme}://join/${encodeURIComponent(token)}`;
       res.type('html').send(`<!doctype html>
