@@ -2,11 +2,13 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { randomBytes } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
+import { AuditActor, auditCreate, auditDelete, auditUpdate, fieldChange } from '../common/audit';
 import { AuthUser } from '../common/auth-user';
 import {
   ItemRow,
@@ -42,7 +44,8 @@ export class ListsService {
     const { data: memberships, error: memberError } = await this.supabase.client
       .from('list_members')
       .select('list_id, role')
-      .eq('user_id', userId);
+      .eq('user_id', userId)
+      .is('deleted_at', null);
 
     if (memberError) {
       throw new Error(memberError.message);
@@ -108,53 +111,49 @@ export class ListsService {
   }
 
   async create(user: AuthUser, dto: CreateListDto) {
-    await this.ensureProfile(user);
-
-    const { data: list, error } = await this.supabase.client
-      .from('lists')
-      .insert({
-        name: dto.name.trim(),
-        description: dto.description?.trim() ?? '',
-        currency: resolveCurrency(dto.currency),
-        created_by_id: user.id,
-        share_token: this.newShareToken(),
-        list_members: [{ user_id: user.id, role: 'owner' }],
-      })
-      .select('id, name, description, currency, created_by_id, share_token, created_at, updated_at, deleted_at')
-      .single();
-
-    if (error || !list) {
-      throw new Error(error?.message ?? 'Could not create list');
-    }
+    const profile = await this.ensureProfile(user);
+    const actor = { id: user.id, name: displayNameOf(profile) };
+    const id = randomUUID();
+    const description = dto.description?.trim() ?? '';
+    const currency = resolveCurrency(dto.currency);
+    const shareToken = this.newShareToken();
+    const list = await this.callAudit<ListRow>('apply_list_insert', {
+      p_actor_id: actor.id,
+      p_list_action: auditCreate(actor, 'list', id),
+      p_member_action: auditCreate(actor, 'list member', `${id} / ${user.id}`),
+      p_id: id,
+      p_name: dto.name.trim(),
+      p_description: description,
+      p_currency: currency,
+      p_created_by_id: user.id,
+      p_share_token: shareToken,
+    });
 
     return {
-      ...toPublicList(list as ListRow, []),
-      members: await this.getMembers(list.id as string),
+      ...toPublicList(list, []),
+      members: await this.getMembers(id),
       role: 'owner' as const,
     };
   }
 
   async update(listId: string, userId: string, dto: UpdateListDto) {
     await this.assertMember(listId, userId);
-    return this.patchList(listId, dto);
+    return this.patchList(listId, dto, await this.actorFor(userId));
   }
 
   async updateByShareToken(token: string, dto: UpdateListDto) {
     const list = await this.findByShareToken(token);
-    return this.patchList(list.id, dto);
+    return this.patchList(list.id, dto, { id: null, name: 'unknown' });
   }
 
   async remove(listId: string, userId: string) {
     await this.assertOwner(listId, userId);
-    const { error } = await this.supabase.client
-      .from('lists')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', listId)
-      .is('deleted_at', null);
-
-    if (error) {
-      throw new Error(error.message);
-    }
+    const actor = await this.actorFor(userId);
+    await this.callAudit('apply_list_soft_delete', {
+      p_actor_id: actor.id,
+      p_action: auditDelete(actor, 'list', listId),
+      p_list_id: listId,
+    });
 
     this.events.emit(REALTIME_EVENTS.listUpdated, {
       type: REALTIME_EVENTS.listUpdated,
@@ -167,12 +166,12 @@ export class ListsService {
 
   async createItem(listId: string, userId: string, dto: CreateItemDto) {
     await this.assertMember(listId, userId);
-    return this.insertItem(listId, dto);
+    return this.insertItem(listId, dto, await this.actorFor(userId));
   }
 
   async createItemByShareToken(token: string, dto: CreateItemDto) {
     const list = await this.findByShareToken(token);
-    return this.insertItem(list.id, dto);
+    return this.insertItem(list.id, dto, { id: null, name: 'unknown' });
   }
 
   async updateItem(
@@ -182,7 +181,7 @@ export class ListsService {
     dto: UpdateItemDto,
   ) {
     await this.assertMember(listId, userId);
-    return this.patchItem(listId, itemId, dto);
+    return this.patchItem(listId, itemId, dto, await this.actorFor(userId));
   }
 
   async updateItemByShareToken(
@@ -191,17 +190,17 @@ export class ListsService {
     dto: UpdateItemDto,
   ) {
     const list = await this.findByShareToken(token);
-    return this.patchItem(list.id, itemId, dto);
+    return this.patchItem(list.id, itemId, dto, { id: null, name: 'unknown' });
   }
 
   async removeItem(listId: string, itemId: string, userId: string) {
     await this.assertMember(listId, userId);
-    return this.softDeleteItem(listId, itemId);
+    return this.softDeleteItem(listId, itemId, await this.actorFor(userId));
   }
 
   async removeItemByShareToken(token: string, itemId: string) {
     const list = await this.findByShareToken(token);
-    return this.softDeleteItem(list.id, itemId);
+    return this.softDeleteItem(list.id, itemId, { id: null, name: 'unknown' });
   }
 
   async getShareLink(listId: string, userId: string) {
@@ -212,16 +211,17 @@ export class ListsService {
 
   async rotateShareToken(listId: string, userId: string) {
     await this.assertOwner(listId, userId);
+    const actor = await this.actorFor(userId);
+    const current = await this.getActiveList(listId);
     const token = this.newShareToken();
-    const { error } = await this.supabase.client
-      .from('lists')
-      .update({ share_token: token })
-      .eq('id', listId)
-      .is('deleted_at', null);
-
-    if (error) {
-      throw new Error(error.message);
-    }
+    await this.callAudit('apply_list_update', {
+      p_actor_id: actor.id,
+      p_action: auditUpdate(actor, 'list', listId, [
+        { field: 'share_token', from: current.share_token, to: token },
+      ]),
+      p_list_id: listId,
+      p_patch: { share_token: token },
+    });
     return this.sharePayload(token);
   }
 
@@ -229,7 +229,8 @@ export class ListsService {
     const { data: members, error } = await this.supabase.client
       .from('list_members')
       .select('*')
-      .eq('list_id', listId);
+      .eq('list_id', listId)
+      .is('deleted_at', null);
 
     if (error) {
       throw new Error(error.message);
@@ -275,6 +276,7 @@ export class ListsService {
       .select('*')
       .eq('list_id', listId)
       .eq('user_id', userId)
+      .is('deleted_at', null)
       .maybeSingle();
 
     if (error) {
@@ -318,36 +320,31 @@ export class ListsService {
       .eq('id', user.id)
       .maybeSingle();
 
+    const profile = existing as ProfileRow;
     if (existing) {
-      if ((existing.email as string) !== user.email) {
-        const { data: updated, error } = await this.supabase.client
-          .from('profiles')
-          .update({ email: user.email })
-          .eq('id', user.id)
-          .select('*')
-          .single();
-        if (error || !updated) {
-          throw new Error(error?.message ?? 'Could not update profile');
-        }
-        return updated as ProfileRow;
+      if (profile.email !== user.email) {
+        const actor = { id: user.id, name: displayNameOf(profile) };
+        return this.callAudit<ProfileRow>('apply_profile_update', {
+          p_actor_id: actor.id,
+          p_action: auditUpdate(actor, 'profile', user.id, [
+            { field: 'email', from: profile.email, to: user.email },
+          ]),
+          p_id: user.id,
+          p_patch: { email: user.email },
+        });
       }
-      return existing as ProfileRow;
+      return profile;
     }
 
-    const { data, error } = await this.supabase.client
-      .from('profiles')
-      .insert({
-        id: user.id,
-        email: user.email,
-        display_name: user.email.split('@')[0],
-      })
-      .select('*')
-      .single();
-
-    if (error || !data) {
-      throw new Error(error?.message ?? 'Could not create profile');
-    }
-    return data as ProfileRow;
+    const displayName = user.email.split('@')[0];
+    const actor = { id: user.id, name: displayName };
+    return this.callAudit<ProfileRow>('apply_profile_insert', {
+      p_actor_id: actor.id,
+      p_action: auditCreate(actor, 'profile', user.id),
+      p_id: user.id,
+      p_email: user.email,
+      p_display_name: displayName,
+    });
   }
 
   private async getListPayload(listId: string, userId?: string) {
@@ -363,26 +360,37 @@ export class ListsService {
     };
   }
 
-  private async patchList(listId: string, dto: UpdateListDto) {
-    const patch: Record<string, string> = {};
-    if (dto.name !== undefined) patch.name = dto.name.trim();
-    if (dto.description !== undefined) patch.description = dto.description.trim();
-    if (dto.currency !== undefined) patch.currency = resolveCurrency(dto.currency);
-
-    const { data: list, error } = await this.supabase.client
-      .from('lists')
-      .update(patch)
-      .eq('id', listId)
-      .is('deleted_at', null)
-      .select('*')
-      .single();
-
-    if (error || !list) {
-      throw new NotFoundException('List not found');
+  private async patchList(listId: string, dto: UpdateListDto, actor: AuditActor) {
+    const current = await this.getActiveList(listId);
+    const nextName = dto.name !== undefined ? dto.name.trim() : current.name;
+    const nextDescription =
+      dto.description !== undefined ? dto.description.trim() : current.description;
+    const nextCurrency =
+      dto.currency !== undefined ? resolveCurrency(dto.currency) : (current.currency ?? 'BRL');
+    const changes = [
+      ...fieldChange('name', current.name, nextName),
+      ...fieldChange('description', current.description, nextDescription),
+      ...fieldChange('currency', current.currency, nextCurrency),
+    ];
+    if (changes.length === 0) {
+      const items = await this.getActiveItems(listId);
+      return toPublicList(current, items);
     }
 
+    const patch: Record<string, string> = {};
+    if (dto.name !== undefined) patch.name = nextName;
+    if (dto.description !== undefined) patch.description = nextDescription;
+    if (dto.currency !== undefined) patch.currency = nextCurrency;
+
+    const list = await this.callAudit<ListRow>('apply_list_update', {
+      p_actor_id: actor.id,
+      p_action: auditUpdate(actor, 'list', listId, changes),
+      p_list_id: listId,
+      p_patch: patch,
+    });
+
     const items = await this.getActiveItems(listId);
-    const publicList = toPublicList(list as ListRow, items);
+    const publicList = toPublicList(list, items);
     this.events.emit(REALTIME_EVENTS.listUpdated, {
       type: REALTIME_EVENTS.listUpdated,
       listId,
@@ -391,50 +399,25 @@ export class ListsService {
     return publicList;
   }
 
-  private async insertItem(listId: string, dto: CreateItemDto) {
+  private async insertItem(listId: string, dto: CreateItemDto, actor: AuditActor) {
     if (dto.grocery_type_id) {
       await this.assertGroceryType(dto.grocery_type_id);
     }
-    const payload: Record<string, string | number | boolean | null> = {
-      list_id: listId,
-      name: dto.name.trim(),
-      description: dto.description?.trim() ?? '',
-      amount: dto.amount?.trim() ?? '',
-      price: dto.price ?? 0,
-    };
-    if (dto.grocery_type_id) {
-      payload.grocery_type_id = dto.grocery_type_id;
-    }
-
-    const { data: item, error } = await this.supabase.client
-      .from('items')
-      .insert(payload)
-      .select(ITEM_SELECT)
-      .single();
-
-    if (error || !item) {
-      if (error && this.missingGrocerySchema(error.message) && !dto.grocery_type_id) {
-        const fallback = await this.supabase.client
-          .from('items')
-          .insert(payload)
-          .select('*')
-          .single();
-        if (fallback.error || !fallback.data) {
-          throw new Error(fallback.error?.message ?? 'Could not create item');
-        }
-        const publicItem = toPublicItem(fallback.data as ItemRow);
-        this.events.emit(REALTIME_EVENTS.itemCreated, {
-          type: REALTIME_EVENTS.itemCreated,
-          listId,
-          item: publicItem,
-        });
-        await this.touchList(listId);
-        return publicItem;
-      }
-      throw new Error(error?.message ?? 'Could not create item');
-    }
-
-    const publicItem = toPublicItem(item as ItemRow);
+    const id = randomUUID();
+    const created = await this.callAudit<ItemRow>('apply_item_insert', {
+      p_actor_id: actor.id,
+      p_action: auditCreate(actor, 'item', id),
+      p_id: id,
+      p_list_id: listId,
+      p_grocery_type_id: dto.grocery_type_id ?? null,
+      p_name: dto.name.trim(),
+      p_description: dto.description?.trim() ?? '',
+      p_amount: dto.amount?.trim() ?? '',
+      p_price: dto.price ?? 0,
+      p_checked: dto.checked ?? false,
+    });
+    const item = await this.reloadItem(created.id);
+    const publicItem = toPublicItem(item);
     this.events.emit(REALTIME_EVENTS.itemCreated, {
       type: REALTIME_EVENTS.itemCreated,
       listId,
@@ -444,51 +427,57 @@ export class ListsService {
     return publicItem;
   }
 
-  private async patchItem(listId: string, itemId: string, dto: UpdateItemDto) {
-    const patch: Record<string, string | number | boolean | null> = {};
-    if (dto.name !== undefined) patch.name = dto.name.trim();
-    if (dto.description !== undefined) patch.description = dto.description.trim();
-    if (dto.amount !== undefined) patch.amount = dto.amount.trim();
-    if (dto.price !== undefined) patch.price = dto.price;
-    if (dto.checked !== undefined) patch.checked = dto.checked;
-    if (dto.grocery_type_id !== undefined) {
-      if (dto.grocery_type_id) {
-        await this.assertGroceryType(dto.grocery_type_id);
-      }
-      patch.grocery_type_id = dto.grocery_type_id;
-    }
-
-    let { data: item, error } = await this.supabase.client
-      .from('items')
-      .update(patch)
-      .eq('id', itemId)
-      .eq('list_id', listId)
-      .is('deleted_at', null)
-      .select(ITEM_SELECT)
-      .single();
-
-    if (error && this.missingGrocerySchema(error.message)) {
-      const fallbackPatch = { ...patch };
-      if (fallbackPatch.grocery_type_id == null) {
-        delete fallbackPatch.grocery_type_id;
-      }
-      const fallback = await this.supabase.client
-        .from('items')
-        .update(fallbackPatch)
-        .eq('id', itemId)
-        .eq('list_id', listId)
-        .is('deleted_at', null)
-        .select('*')
-        .single();
-      item = fallback.data;
-      error = fallback.error;
-    }
-
-    if (error || !item) {
+  private async patchItem(
+    listId: string,
+    itemId: string,
+    dto: UpdateItemDto,
+    actor: AuditActor,
+  ) {
+    const current = await this.reloadItem(itemId);
+    if (current.list_id !== listId || current.deleted_at) {
       throw new NotFoundException('Item not found');
     }
+    if (dto.grocery_type_id) {
+      await this.assertGroceryType(dto.grocery_type_id);
+    }
 
-    const publicItem = toPublicItem(item as ItemRow);
+    const nextName = dto.name !== undefined ? dto.name.trim() : current.name;
+    const nextDescription =
+      dto.description !== undefined ? dto.description.trim() : current.description;
+    const nextAmount = dto.amount !== undefined ? dto.amount.trim() : current.amount;
+    const nextPrice = dto.price !== undefined ? dto.price : Number(current.price);
+    const nextChecked = dto.checked !== undefined ? dto.checked : Boolean(current.checked);
+    const nextType =
+      dto.grocery_type_id !== undefined ? dto.grocery_type_id : current.grocery_type_id;
+    const changes = [
+      ...fieldChange('name', current.name, nextName),
+      ...fieldChange('description', current.description, nextDescription),
+      ...fieldChange('amount', current.amount, nextAmount),
+      ...fieldChange('price', current.price, nextPrice),
+      ...fieldChange('checked', current.checked, nextChecked),
+      ...fieldChange('grocery_type_id', current.grocery_type_id, nextType),
+    ];
+    if (changes.length === 0) {
+      return toPublicItem(current);
+    }
+
+    const patch: Record<string, string | number | boolean | null> = {};
+    if (dto.name !== undefined) patch.name = nextName;
+    if (dto.description !== undefined) patch.description = nextDescription;
+    if (dto.amount !== undefined) patch.amount = nextAmount;
+    if (dto.price !== undefined) patch.price = nextPrice;
+    if (dto.checked !== undefined) patch.checked = nextChecked;
+    if (dto.grocery_type_id !== undefined) patch.grocery_type_id = nextType;
+
+    await this.callAudit('apply_item_update', {
+      p_actor_id: actor.id,
+      p_action: auditUpdate(actor, 'item', itemId, changes),
+      p_item_id: itemId,
+      p_list_id: listId,
+      p_patch: patch,
+    });
+    const item = await this.reloadItem(itemId);
+    const publicItem = toPublicItem(item);
     this.events.emit(REALTIME_EVENTS.itemUpdated, {
       type: REALTIME_EVENTS.itemUpdated,
       listId,
@@ -498,17 +487,13 @@ export class ListsService {
     return publicItem;
   }
 
-  private async softDeleteItem(listId: string, itemId: string) {
-    const { error } = await this.supabase.client
-      .from('items')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', itemId)
-      .eq('list_id', listId)
-      .is('deleted_at', null);
-
-    if (error) {
-      throw new NotFoundException('Item not found');
-    }
+  private async softDeleteItem(listId: string, itemId: string, actor: AuditActor) {
+    await this.callAudit('apply_item_soft_delete', {
+      p_actor_id: actor.id,
+      p_action: auditDelete(actor, 'item', itemId),
+      p_item_id: itemId,
+      p_list_id: listId,
+    });
 
     this.events.emit(REALTIME_EVENTS.itemDeleted, {
       type: REALTIME_EVENTS.itemDeleted,
@@ -584,6 +569,7 @@ export class ListsService {
     const { data, error } = await this.supabase.client
       .from('grocery_types')
       .select('id, code, name, sort_order')
+      .is('deleted_at', null)
       .order('sort_order', { ascending: true });
 
     if (error) {
@@ -602,6 +588,7 @@ export class ListsService {
       .from('grocery_types')
       .select('id')
       .eq('id', id)
+      .is('deleted_at', null)
       .maybeSingle();
 
     if (error) {
@@ -610,6 +597,41 @@ export class ListsService {
     if (!data) {
       throw new BadRequestException('Unknown grocery type');
     }
+  }
+
+  private async actorFor(userId: string): Promise<AuditActor> {
+    const { data } = await this.supabase.client
+      .from('profiles')
+      .select('display_name, email')
+      .eq('id', userId)
+      .maybeSingle();
+    const email = (data?.email as string | undefined) ?? '';
+    const name = (data?.display_name as string | null)?.trim() || email.split('@')[0] || 'unknown';
+    return { id: userId, name };
+  }
+
+  private async callAudit<T>(fn: string, args: Record<string, unknown>): Promise<T> {
+    const { data, error } = await this.supabase.client.rpc(fn, args);
+    if (error || data == null) {
+      const message = error?.message ?? 'Could not write audit log';
+      if (message.toLowerCase().includes('not found')) {
+        throw new NotFoundException(message);
+      }
+      throw new InternalServerErrorException(message);
+    }
+    return data as T;
+  }
+
+  private async reloadItem(itemId: string): Promise<ItemRow> {
+    const { data, error } = await this.supabase.client
+      .from('items')
+      .select(ITEM_SELECT)
+      .eq('id', itemId)
+      .maybeSingle();
+    if (error || !data) {
+      throw new NotFoundException(error?.message ?? 'Item not found');
+    }
+    return data as ItemRow;
   }
 
   private async touchList(listId: string) {

@@ -25,6 +25,13 @@ Accounts live in Supabase Auth. The API uses the Supabase service role and is th
    - [`supabase/2026_10_02_000002_currency.sql`](supabase/2026_10_02_000002_currency.sql)
    - [`supabase/2026_10_02_000003_grocery_types.sql`](supabase/2026_10_02_000003_grocery_types.sql)
    - [`supabase/2026_10_02_000004_integrity.sql`](supabase/2026_10_02_000004_integrity.sql)
+   - [`supabase/2026_10_03_000001_item_checked.sql`](supabase/2026_10_03_000001_item_checked.sql)
+   - [`supabase/2026_10_03_000002_profiles_log.sql`](supabase/2026_10_03_000002_profiles_log.sql)
+   - [`supabase/2026_10_03_000003_lists_log.sql`](supabase/2026_10_03_000003_lists_log.sql)
+   - [`supabase/2026_10_03_000004_grocery_types_log.sql`](supabase/2026_10_03_000004_grocery_types_log.sql)
+   - [`supabase/2026_10_03_000005_items_log.sql`](supabase/2026_10_03_000005_items_log.sql)
+   - [`supabase/2026_10_03_000006_list_members_log.sql`](supabase/2026_10_03_000006_list_members_log.sql)
+   - [`supabase/2026_10_03_000007_list_invites_log.sql`](supabase/2026_10_03_000007_list_invites_log.sql)
 4. In Supabase, under Authentication, enable email and password. For local testing, turn off **Confirm email** so a new account can sign in immediately.
 5. Copy the env examples and fill them in:
 

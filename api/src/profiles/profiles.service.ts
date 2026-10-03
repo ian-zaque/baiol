@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { auditUpdate } from '../common/audit';
 import { AuthUser } from '../common/auth-user';
 import { ProfileRow, displayNameOf } from '../common/types';
 import { ListsService } from '../lists/lists.service';
@@ -25,18 +26,28 @@ export class ProfilesService {
   }
 
   async update(user: AuthUser, dto: UpdateProfileDto) {
-    await this.lists.ensureProfile(user);
-    const { data, error } = await this.supabase.client
-      .from('profiles')
-      .update({
-        display_name: dto.display_name?.trim() || user.email.split('@')[0],
-      })
-      .eq('id', user.id)
-      .select('*')
-      .single();
+    const current = await this.lists.ensureProfile(user);
+    const displayName = dto.display_name?.trim() || user.email.split('@')[0];
+    if ((current.display_name ?? '') === displayName) {
+      return this.toPublic(current);
+    }
 
-    if (error || !data) {
-      throw new NotFoundException('Profile not found');
+    const actor = { id: user.id, name: displayNameOf(current) };
+    const { data, error } = await this.supabase.client.rpc('apply_profile_update', {
+      p_actor_id: actor.id,
+      p_action: auditUpdate(actor, 'profile', user.id, [
+        { field: 'display_name', from: current.display_name, to: displayName },
+      ]),
+      p_id: user.id,
+      p_patch: { display_name: displayName },
+    });
+
+    if (error || data == null) {
+      const message = error?.message ?? 'Could not update profile';
+      if (message.toLowerCase().includes('not found')) {
+        throw new NotFoundException(message);
+      }
+      throw new InternalServerErrorException(message);
     }
     return this.toPublic(data as ProfileRow);
   }
